@@ -1,0 +1,61 @@
+name: Fetch Convex Logs
+
+# One-off diagnostic: dumps recent function invocation logs from a Convex
+# deployment so we can see actual errors (e.g. failed auth:signIn calls)
+# without needing a new device build to add client-side debug output.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Which Convex deployment to fetch logs from
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - production
+      history:
+        description: Number of most recent log lines to fetch
+        required: true
+        default: "300"
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-logs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CONVEX_DEPLOY_KEY: ${{ inputs.target == 'dev' && secrets.CONVEX_DEPLOY_KEY || inputs.target == 'staging' && secrets.CONVEX_STAGING_DEPLOY_KEY || secrets.CONVEX_PROD_DEPLOY_KEY }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify required secret
+        shell: bash
+        run: |
+          if [ -z "$CONVEX_DEPLOY_KEY" ]; then
+            echo "Missing deploy key secret for target '${{ inputs.target }}'."
+            exit 1
+          fi
+
+      - name: Fetch recent logs
+        shell: bash
+        run: |
+          case "${{ inputs.target }}" in
+            production) EXTRA_ARGS="--prod" ;;
+            staging) EXTRA_ARGS="--deployment staging" ;;
+            *) EXTRA_ARGS="" ;;
+          esac
+          timeout 30 npx convex logs --success --history "${{ inputs.history }}" $EXTRA_ARGS || true
