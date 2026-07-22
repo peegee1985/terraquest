@@ -59,13 +59,19 @@ export function ExplorerMap({ route, fogMode = 'demo' }: { route: TrackPoint[]; 
   const holes = route.map((point) => circleHole(point));
   const [region, setRegion] = useState<Region>(initialRegion);
 
-  // TQ-17 H3 fog prototype: recomputed only when the route grows or the map
-  // settles on a new region (onRegionChangeComplete), not on every drag frame.
-  const revealedCells = useMemo(() => cellsRevealedByRoute(route), [route]);
-  const h3Fog = useMemo(
-    () => (fogMode === 'h3' ? buildFogGeometry(revealedCells, boundsFromRegion(region)) : null),
-    [fogMode, revealedCells, region],
-  );
+  // TQ-17 H3 fog prototype: only touches h3-js when the layer toggle is on
+  // (never on the default 'demo' path), and never lets a prototype-only
+  // failure crash the whole map screen — falls back to the demo fog instead.
+  const h3Fog = useMemo(() => {
+    if (fogMode !== 'h3') return null;
+    try {
+      const revealedCells = cellsRevealedByRoute(route);
+      return buildFogGeometry(revealedCells, boundsFromRegion(region));
+    } catch (error) {
+      console.warn('[TQ-17] H3 fog prototype failed, falling back to demo fog', error);
+      return null;
+    }
+  }, [fogMode, route, region]);
 
   return (
     <View style={styles.container}>

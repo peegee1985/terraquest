@@ -61,10 +61,15 @@ export function ExplorerMap({ route, fogMode = 'demo' }: { route: TrackPoint[]; 
 
   const h3FogPath = (() => {
     if (fogMode !== 'h3') return null;
-    const bounds = boundsFromRoute(route);
-    const revealedCells = cellsRevealedByRoute(route);
-    const geometry = buildFogGeometry(revealedCells, bounds);
-    return fogGeometryToPath(geometry.outerRing, geometry.holes, bounds);
+    try {
+      const bounds = boundsFromRoute(route);
+      const revealedCells = cellsRevealedByRoute(route);
+      const geometry = buildFogGeometry(revealedCells, bounds);
+      return fogGeometryToPath(geometry.outerRing, geometry.holes, bounds);
+    } catch (error) {
+      console.warn('[TQ-17] H3 fog prototype failed, falling back to demo fog', error);
+      return null;
+    }
   })();
 
   return (
