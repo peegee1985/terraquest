@@ -10,7 +10,7 @@ TerraQuest is an Expo/React Native exploration RPG. Walking reveals a persistent
 - Native map fog-mask proof of concept plus web fallback
 - Local-first session recovery with AsyncStorage
 - Pure progression rules with automated tests
-- Convex schema for users, stats, sessions, cells, XP ledger, and quests
+- Deployed Convex schema for users, stats, sessions, cells, XP ledger, and quests
 
 ## Run locally
 
@@ -23,17 +23,13 @@ Use Expo Go for the initial UI and foreground tracking. Background tracking will
 
 ## Connect Convex
 
-```bash
-npx convex dev
-```
-
-Then copy the generated deployment URL to `.env.local`:
+The development deployment is connected through the public URL committed in `.env`:
 
 ```bash
-EXPO_PUBLIC_CONVEX_URL=https://your-deployment.convex.cloud
+EXPO_PUBLIC_CONVEX_URL=https://tough-shepherd-707.convex.cloud
 ```
 
-The app intentionally works with local demo state before Convex is connected.
+Backend changes under `convex/**` are deployed by the read-only GitHub Actions workflow using the `CONVEX_DEPLOY_KEY` repository secret. The app intentionally retains local demo state when Convex is unavailable.
 
 ## Validation
 
