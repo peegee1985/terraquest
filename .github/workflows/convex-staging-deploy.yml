@@ -1,6 +1,10 @@
 name: Deploy Convex Staging
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/convex-staging-deploy.yml'
   workflow_dispatch:
 
 permissions:
@@ -41,6 +45,7 @@ jobs:
       - name: Deploy staging backend
         run: >-
           npx convex deploy
+          --preview-name staging
           --typecheck enable
           --message "TerraQuest staging deployment from GitHub Actions"
           --cmd 'echo "STAGING_CONVEX_URL=$CONVEX_DEPLOY_URL" >> "$GITHUB_ENV"'
