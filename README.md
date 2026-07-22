@@ -41,7 +41,9 @@ Backend changes under `convex/**` are deployed by the read-only GitHub Actions w
 
 Set `EXPO_PUBLIC_CONVEX_URL` separately in each matching EAS environment. The value is public client configuration; Convex deployment keys remain only in protected CI secrets.
 
-The manually triggered `EAS Development Build` workflow verifies `EXPO_TOKEN`, links the Expo project, configures the development Convex URL, and queues an internally distributed Android development build. The workflow has read-only repository permissions.
+The manually triggered `EAS Development Build` workflow verifies `EXPO_TOKEN` and the Expo project link, configures the development Convex URL, and queues an internally distributed Android development build. The workflow has read-only repository permissions.
+
+Expo project: [`@peegee85/terraquest`](https://expo.dev/accounts/peegee85/projects/terraquest), project ID `cbb276cd-c61e-4ab2-b19f-1198d03987da`.
 
 ## Validation
 

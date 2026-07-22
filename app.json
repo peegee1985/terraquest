@@ -56,7 +56,11 @@
     },
     "extra": {
       "privacyMode": "local-first",
-      "progressionVersion": "v1"
-    }
+      "progressionVersion": "v1",
+      "eas": {
+        "projectId": "cbb276cd-c61e-4ab2-b19f-1198d03987da"
+      }
+    },
+    "owner": "peegee85"
   }
 }
