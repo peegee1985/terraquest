@@ -7,6 +7,7 @@ import { Alert, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-na
 import { ExplorerMap, FogMode } from '../../components/map/explorer-map';
 
 import { PrimaryButton } from '@/components/ui/primitives';
+import { useLocationPermissions } from '@/hooks/use-location-permissions';
 import { useExplorer } from '@/state/explorer-context';
 import { colors, radii, spacing, typography } from '@/theme/tokens';
 
@@ -18,48 +19,40 @@ function formatDuration(seconds: number) {
 
 export default function MapScreen() {
   const { session, startSession, togglePause, finishSession, addTrackPoint } = useExplorer();
-  const [locationStatus, setLocationStatus] = useState<'idle' | 'granted' | 'denied'>('idle');
+  const { isForegroundGranted, isForegroundDenied, requestForeground } = useLocationPermissions();
   // TQ-17 prototype toggle: compares the current stroke-mask fog against the
   // H3-grid reveal candidate for Fáze 3. Remove once TQ-23 picks a winner.
   const [fogMode, setFogMode] = useState<FogMode>('demo');
 
   useEffect(() => {
-    if (!session.active || session.paused) return;
+    if (!session.active || session.paused || !isForegroundGranted) return;
     let subscription: Location.LocationSubscription | undefined;
     let cancelled = false;
-    Location.requestForegroundPermissionsAsync()
-      .then(async ({ status }) => {
-        if (cancelled) return;
-        if (status !== 'granted') {
-          setLocationStatus('denied');
-          return;
-        }
-        setLocationStatus('granted');
-        const watcher = await Location.watchPositionAsync(
-          { accuracy: Location.Accuracy.High, distanceInterval: 8, timeInterval: 5000 },
-          ({ coords, timestamp }) => addTrackPoint({ latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy, timestamp }),
-        );
-        if (cancelled) watcher.remove();
-        else subscription = watcher;
-      })
-      .catch(() => setLocationStatus('denied'));
+    Location.watchPositionAsync(
+      { accuracy: Location.Accuracy.High, distanceInterval: 8, timeInterval: 5000 },
+      ({ coords, timestamp }) => addTrackPoint({ latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy, timestamp }),
+    ).then((watcher) => {
+      if (cancelled) watcher.remove();
+      else subscription = watcher;
+    });
     return () => {
       cancelled = true;
       subscription?.remove();
     };
-  }, [addTrackPoint, session.active, session.paused]);
+  }, [addTrackPoint, session.active, session.paused, isForegroundGranted]);
 
+  // TQ-20: denial doesn't block the session — it just runs without live
+  // track points (demo/limited mode), which is what this status label shows.
   const status = session.paused
     ? { label: 'Pozastaveno', color: colors.warning, icon: 'pause' as const }
-    : locationStatus === 'denied'
+    : isForegroundDenied
       ? { label: 'Omezená poloha', color: colors.danger, icon: 'crosshairs-question' as const }
       : session.active
         ? { label: 'Průzkum aktivní', color: colors.brand, icon: 'access-point' as const }
         : { label: 'Připraveno', color: colors.textSecondary, icon: 'map-marker-outline' as const };
 
   const handleStart = async () => {
-    const result = await Location.requestForegroundPermissionsAsync();
-    setLocationStatus(result.status === 'granted' ? 'granted' : 'denied');
+    const result = await requestForeground();
     if (result.status !== 'granted') {
       Alert.alert('Poloha je vypnutá', 'TerraQuest může zatím běžet v ukázkovém režimu. Oprávnění lze později změnit v nastavení.');
     }

@@ -17,6 +17,7 @@ type ExplorerContextValue = {
   snapshot: typeof demoSnapshot;
   quests: Quest[];
   session: SessionState;
+  hasCompletedSession: boolean;
   startSession: (mode?: MovementMode) => void;
   togglePause: () => void;
   finishSession: () => void;
@@ -28,6 +29,9 @@ type ExplorerContextValue = {
 const LOCAL_SESSION_ID = 'primary';
 const MAX_ROUTE_POINTS = 500;
 const EXTRA_SNAPSHOT_PREFERENCE_KEY = 'explorer.snapshot.extra.v1';
+// TQ-20: background location must not be offered until the user has
+// actually finished an expedition once — this flag gates that in Settings.
+const HAS_COMPLETED_SESSION_PREFERENCE_KEY = 'explorer.hasCompletedSession.v1';
 
 const initialSession: SessionState = {
   active: false,
@@ -44,6 +48,7 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState(demoSnapshot);
   const [quests] = useState(demoQuests);
   const [session, setSession] = useState<SessionState>(initialSession);
+  const [hasCompletedSession, setHasCompletedSession] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const persistenceRef = useRef<LocalPersistence | null>(null);
   const nextSequenceRef = useRef(0);
@@ -56,13 +61,15 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         persistenceRef.current = persistence;
 
-        const [xpProjection, activeSession, storedRoute, extraSnapshotJson] = await Promise.all([
+        const [xpProjection, activeSession, storedRoute, extraSnapshotJson, hasCompletedSessionValue] = await Promise.all([
           persistence.xpProjection.get(),
           persistence.session.getActive(),
           persistence.trackPoints.listBySession(LOCAL_SESSION_ID),
           persistence.preferences.get(EXTRA_SNAPSHOT_PREFERENCE_KEY),
+          persistence.preferences.get(HAS_COMPLETED_SESSION_PREFERENCE_KEY),
         ]);
         if (cancelled) return;
+        setHasCompletedSession(hasCompletedSessionValue === 'true');
 
         const route: TrackPoint[] = storedRoute.length
           ? storedRoute.map((point) => ({
@@ -166,6 +173,10 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
       persistSession(next, 'completed');
       return next;
     });
+    setHasCompletedSession(true);
+    persistenceRef.current?.preferences
+      .set(HAS_COMPLETED_SESSION_PREFERENCE_KEY, 'true', Date.now())
+      .catch(() => undefined);
   }, [persistSession]);
 
   const addTrackPoint = useCallback((point: TrackPoint) => {
@@ -194,8 +205,8 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ snapshot, quests, session, startSession, togglePause, finishSession, addTrackPoint }),
-    [addTrackPoint, finishSession, quests, session, snapshot, startSession, togglePause],
+    () => ({ snapshot, quests, session, hasCompletedSession, startSession, togglePause, finishSession, addTrackPoint }),
+    [addTrackPoint, finishSession, hasCompletedSession, quests, session, snapshot, startSession, togglePause],
   );
 
   return <ExplorerContext.Provider value={value}>{children}</ExplorerContext.Provider>;

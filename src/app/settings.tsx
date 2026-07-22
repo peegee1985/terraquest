@@ -1,11 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Card, Eyebrow, PrimaryButton, Screen } from '@/components/ui/primitives';
+import { useLocationPermissions } from '@/hooks/use-location-permissions';
 import { useAuthIdentity } from '@/state/auth-context';
+import { useExplorer } from '@/state/explorer-context';
 import { colors, radii, spacing, typography } from '@/theme/tokens';
 
 const privacyActions = [
@@ -18,14 +19,15 @@ export default function SettingsScreen() {
   const router = useRouter();
   const identity = useAuthIdentity();
   const isGuest = identity?.isAnonymous ?? true;
+  const { hasCompletedSession } = useExplorer();
+  const { isForegroundGranted, isBackgroundGranted, requestBackground: requestBackgroundPermission } = useLocationPermissions();
 
   const requestBackground = async () => {
-    const foreground = await Location.getForegroundPermissionsAsync();
-    if (!foreground.granted) {
+    if (!isForegroundGranted) {
       Alert.alert('Nejdřív poloha při používání', 'Background polohu nabídneme až po povolení polohy při otevřené aplikaci.');
       return;
     }
-    const background = await Location.requestBackgroundPermissionsAsync();
+    const background = await requestBackgroundPermission();
     if (!background.granted && !background.canAskAgain) {
       Alert.alert('Oprávnění je vypnuté', 'Povol „Vždy“ v systémovém nastavení.', [
         { text: 'Zrušit', style: 'cancel' },
@@ -68,14 +70,22 @@ export default function SettingsScreen() {
 
       <Card style={styles.permissionCard}>
         <View style={styles.permissionIcon}>
-          <MaterialCommunityIcons color={colors.brand} name="map-clock-outline" size={28} />
+          <MaterialCommunityIcons color={hasCompletedSession ? colors.brand : colors.textDisabled} name="map-clock-outline" size={28} />
         </View>
         <View style={styles.permissionCopy}>
           <Text style={styles.cardTitle}>Průzkum na pozadí</Text>
-          <Text style={styles.cardBody}>Povol až po první výpravě, aby záznam pokračoval při zamčeném telefonu. Mimo aktivní průzkum polohu nesbíráme.</Text>
+          <Text style={styles.cardBody}>
+            {!hasCompletedSession
+              ? 'Odemkne se po dokončení první výpravy — mimo aktivní průzkum polohu nesbíráme.'
+              : isBackgroundGranted
+                ? 'Zapnuto — záznam pokračuje i při zamčeném telefonu.'
+                : 'Povol, aby záznam pokračoval při zamčeném telefonu. Mimo aktivní průzkum polohu nesbíráme.'}
+          </Text>
         </View>
       </Card>
-      <PrimaryButton label="Povolit průzkum na pozadí" icon="map-marker-path" onPress={requestBackground} tone="surface" />
+      {hasCompletedSession && !isBackgroundGranted ? (
+        <PrimaryButton label="Povolit průzkum na pozadí" icon="map-marker-path" onPress={requestBackground} tone="surface" />
+      ) : null}
 
       {privacyActions.map(([icon, title, description]) => (
         <Pressable accessibilityRole="button" key={title} style={styles.action}>

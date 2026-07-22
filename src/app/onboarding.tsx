@@ -1,11 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
 
 import { PrimaryButton, ProgressBar } from '@/components/ui/primitives';
+import { useLocationPermissions } from '@/hooks/use-location-permissions';
 import { colors, radii, spacing, typography } from '@/theme/tokens';
 
 const pages = [
@@ -18,17 +18,29 @@ const pages = [
 export default function OnboardingScreen() {
   const router = useRouter();
   const [step, setStep] = useState(0);
-  const [denied, setDenied] = useState(false);
+  const { foreground, isForegroundDenied, requestForeground } = useLocationPermissions();
   const page = pages[step];
+  // Only show the "denied" card once the user has actually gone through the
+  // permission step at least once — not before, and not just because the OS
+  // reports UNDETERMINED before we've asked.
+  const [askedOnce, setAskedOnce] = useState(false);
+  const denied = askedOnce && isForegroundDenied;
 
   const requestLocation = async () => {
-    const permission = await Location.requestForegroundPermissionsAsync();
-    if (permission.granted) {
-      setDenied(false);
-      setStep(3);
-    } else {
-      setDenied(true);
-    }
+    setAskedOnce(true);
+    await requestForeground();
+    // Whether granted or denied, the user can always continue — TerraQuest
+    // works in a demo/limited mode without location, per TQ-20.
+    setStep(3);
+  };
+
+  const openSystemSettings = () => {
+    Linking.openSettings().catch(() => undefined);
+  };
+
+  const skip = () => {
+    setAskedOnce(true);
+    setStep(3);
   };
 
   const finish = async () => {
@@ -50,9 +62,9 @@ export default function OnboardingScreen() {
           {denied ? (
             <View style={styles.deniedCard}>
               <Text style={styles.deniedTitle}>Poloha je zamítnutá</Text>
-              <Text style={styles.deniedBody}>Můžeš oprávnění zkusit znovu nebo aplikaci procházet bez záznamu trasy.</Text>
-              <Pressable accessibilityRole="button" onPress={requestLocation}>
-                <Text style={styles.repair}>Opravit oprávnění</Text>
+              <Text style={styles.deniedBody}>Aplikaci můžeš dál procházet bez záznamu trasy. Oprávnění lze kdykoliv zapnout v nastavení.</Text>
+              <Pressable accessibilityRole="button" onPress={foreground.canAskAgain ? requestLocation : openSystemSettings}>
+                <Text style={styles.repair}>{foreground.canAskAgain ? 'Zkusit znovu' : 'Otevřít nastavení systému'}</Text>
               </Pressable>
             </View>
           ) : null}
@@ -62,7 +74,7 @@ export default function OnboardingScreen() {
           {step === 2 ? (
             <>
               <PrimaryButton label="Povolit při používání" icon="map-marker-check-outline" onPress={requestLocation} />
-              <PrimaryButton label="Teď ne" icon="arrow-right" onPress={() => setDenied(true)} tone="surface" />
+              <PrimaryButton label="Teď ne" icon="arrow-right" onPress={skip} tone="surface" />
             </>
           ) : (
             <PrimaryButton label={step === 3 ? 'Vstoupit do TerraQuest' : 'Pokračovat'} onPress={step === 3 ? finish : () => setStep((value) => value + 1)} />
