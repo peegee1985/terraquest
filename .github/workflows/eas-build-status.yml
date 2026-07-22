@@ -24,25 +24,26 @@ jobs:
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
       BUILD_ID: ${{ inputs.build_id || 'a62da56d-72b6-4e3e-bf6d-ff9d91ecfc3b' }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
       - name: Monitor EAS build
         shell: bash
         run: |
+          query='query BuildsByIdQuery($buildId: ID!) { builds { byId(buildId: $buildId) { id status platform error { errorCode message docsUrl } artifacts { buildUrl applicationArchiveUrl buildArtifactsUrl } buildProfile createdAt completedAt } } }'
+
           for attempt in $(seq 1 50); do
-            npx --yes eas-cli@21.0.2 build:list \
-              --platform android \
-              --limit 50 \
-              --json \
-              --non-interactive > /tmp/eas-builds.json
-            jq --arg id "$BUILD_ID" '[.[] | select(.id == $id)][0]' \
-              /tmp/eas-builds.json > /tmp/eas-build.json
+            jq -n --arg query "$query" --arg id "$BUILD_ID" \
+              '{query: $query, variables: {buildId: $id}}' > /tmp/eas-request.json
+            curl --fail-with-body --silent --show-error \
+              --header "Authorization: Bearer $EXPO_TOKEN" \
+              --header "Content-Type: application/json" \
+              --data @/tmp/eas-request.json \
+              https://api.expo.dev/graphql > /tmp/eas-response.json
+
+            if jq -e '.errors and (.errors | length > 0)' /tmp/eas-response.json > /dev/null; then
+              jq '{errors}' /tmp/eas-response.json
+              exit 1
+            fi
+
+            jq '.data.builds.byId' /tmp/eas-response.json > /tmp/eas-build.json
 
             if [ "$(jq -r 'type' /tmp/eas-build.json)" = "null" ]; then
               echo "Build $BUILD_ID was not returned for the linked Expo project."
