@@ -31,7 +31,19 @@ jobs:
         shell: bash
         run: |
           for attempt in $(seq 1 50); do
-            npx --yes eas-cli@21.0.2 build:view "$BUILD_ID" --json > /tmp/eas-build.json
+            npx --yes eas-cli@21.0.2 build:list \
+              --platform android \
+              --limit 50 \
+              --json \
+              --non-interactive > /tmp/eas-builds.json
+            jq --arg id "$BUILD_ID" '[.[] | select(.id == $id)][0]' \
+              /tmp/eas-builds.json > /tmp/eas-build.json
+
+            if [ "$(jq -r 'type' /tmp/eas-build.json)" = "null" ]; then
+              echo "Build $BUILD_ID was not returned for the linked Expo project."
+              exit 1
+            fi
+
             status=$(jq -r '.status | ascii_downcase' /tmp/eas-build.json)
             echo "EAS build status: $status (check $attempt/50)"
 
