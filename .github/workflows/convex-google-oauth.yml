@@ -71,8 +71,11 @@ jobs:
           # (confirmed: fails with "Not authorized" regardless of flags) —
           # it has to go through project-level default env vars instead,
           # which preview deployments read from.
+          # --project bypasses the CLI's project auto-detection, which
+          # otherwise reads the *_CONVEX_URL in the repo's committed .env
+          # (pointing at the dev deployment) and resolves the wrong project.
           if [ "${{ inputs.target }}" = "staging" ]; then
-            SET_CMD=(npx convex env default set --type preview)
+            SET_CMD=(npx convex env default set --type preview --project petr-gottstein:terraquest)
           elif [ "${{ inputs.target }}" = "production" ]; then
             SET_CMD=(npx convex env set --prod)
           else

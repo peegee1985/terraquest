@@ -39,9 +39,25 @@ const jwks = JSON.stringify({ keys: [{ use: 'sig', ...publicKey }] });
 const jwtPrivateKey = privateKey.trimEnd().replace(/\n/g, ' ');
 
 function setEnvVar(name, value) {
+  // `--project` is required here: without it, `env default set --type
+  // preview` resolves "current project" by auto-detecting a *_CONVEX_URL
+  // in the repo's committed .env, which points at the dev deployment
+  // (tough-shepherd-707) — wrong project entirely for a staging/preview
+  // default. Passing --project explicitly bypasses that auto-detection.
   const args =
     target === 'staging'
-      ? ['convex', 'env', 'default', 'set', name, '--type', 'preview', ...(force ? ['--force'] : [])]
+      ? [
+          'convex',
+          'env',
+          'default',
+          'set',
+          name,
+          '--type',
+          'preview',
+          '--project',
+          'petr-gottstein:terraquest',
+          ...(force ? ['--force'] : []),
+        ]
       : ['convex', 'env', 'set', name, ...extraArgs, ...(force ? ['--force'] : [])];
   const result = spawnSync('npx', args, { input: value, stdio: ['pipe', 'inherit', 'inherit'] });
   if (result.status !== 0) {
