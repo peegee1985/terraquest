@@ -1,6 +1,11 @@
 name: EAS Development Build
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - assets/images/icon.png
   workflow_dispatch:
 
 permissions:
@@ -9,7 +14,7 @@ permissions:
 jobs:
   android-development:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     env:
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
     steps:
@@ -48,4 +53,4 @@ jobs:
           --profile development
           --message "TerraQuest development checkpoint"
           --non-interactive
-          --no-wait
+          --wait
