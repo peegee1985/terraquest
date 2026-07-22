@@ -8,6 +8,12 @@ import { AuthProvider } from '@/state/auth-context';
 import { ExplorerProvider } from '@/state/explorer-context';
 import { colors } from '@/theme/tokens';
 
+// TQ-21: registers the background location task. Must happen at module
+// scope (TaskManager's own requirement) so the OS can invoke it even when
+// it restarts the app process with no screen mounted, just to deliver a
+// batch of background location updates.
+import '@/domain/tracking-task';
+
 SplashScreen.preventAutoHideAsync();
 
 const convexUrl = process.env.EXPO_PUBLIC_CONVEX_URL;

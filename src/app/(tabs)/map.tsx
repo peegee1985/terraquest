@@ -1,7 +1,6 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import * as Haptics from 'expo-haptics';
-import * as Location from 'expo-location';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Alert, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
 
 import { ExplorerMap, FogMode } from '../../components/map/explorer-map';
@@ -18,28 +17,15 @@ function formatDuration(seconds: number) {
 }
 
 export default function MapScreen() {
-  const { session, startSession, togglePause, finishSession, addTrackPoint } = useExplorer();
-  const { isForegroundGranted, isForegroundDenied, requestForeground } = useLocationPermissions();
+  const { session, startSession, togglePause, finishSession } = useExplorer();
+  const { isForegroundDenied, requestForeground } = useLocationPermissions();
   // TQ-17 prototype toggle: compares the current stroke-mask fog against the
   // H3-grid reveal candidate for Fáze 3. Remove once TQ-23 picks a winner.
   const [fogMode, setFogMode] = useState<FogMode>('demo');
 
-  useEffect(() => {
-    if (!session.active || session.paused || !isForegroundGranted) return;
-    let subscription: Location.LocationSubscription | undefined;
-    let cancelled = false;
-    Location.watchPositionAsync(
-      { accuracy: Location.Accuracy.High, distanceInterval: 8, timeInterval: 5000 },
-      ({ coords, timestamp }) => addTrackPoint({ latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy, timestamp }),
-    ).then((watcher) => {
-      if (cancelled) watcher.remove();
-      else subscription = watcher;
-    });
-    return () => {
-      cancelled = true;
-      subscription?.remove();
-    };
-  }, [addTrackPoint, session.active, session.paused, isForegroundGranted]);
+  // TQ-21: location capture itself runs in a background task
+  // (src/domain/tracking-task.ts), started/stopped by explorer-context —
+  // this screen only requests permission and reflects status/route.
 
   // TQ-20: denial doesn't block the session — it just runs without live
   // track points (demo/limited mode), which is what this status label shows.

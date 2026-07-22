@@ -3,6 +3,7 @@ import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, 
 import { demoQuests, demoRoute, demoSnapshot } from '@/data/demo';
 import { getLocalPersistence, type LocalPersistence } from '@/data/local';
 import { MovementMode, Quest, TrackPoint } from '@/domain/types';
+import { LOCAL_SESSION_ID, startLocationTracking, stopLocationTracking } from '@/domain/tracking-task';
 
 type SessionState = {
   active: boolean;
@@ -21,13 +22,14 @@ type ExplorerContextValue = {
   startSession: (mode?: MovementMode) => void;
   togglePause: () => void;
   finishSession: () => void;
-  addTrackPoint: (point: TrackPoint) => void;
 };
 
-// Single reusable session id for this prototype phase; multi-session history
-// arrives with real background tracking (Fáze 3, TQ-21).
-const LOCAL_SESSION_ID = 'primary';
 const MAX_ROUTE_POINTS = 500;
+// TQ-21: while a session is active, re-read the route from the DB at the
+// same cadence the background task writes to it — this is what makes the
+// map reflect points regardless of whether they came from the foreground or
+// while the app was backgrounded.
+const ROUTE_REFRESH_INTERVAL_MS = 5000;
 const EXTRA_SNAPSHOT_PREFERENCE_KEY = 'explorer.snapshot.extra.v1';
 // TQ-20: background location must not be offered until the user has
 // actually finished an expedition once — this flag gates that in Settings.
@@ -93,6 +95,12 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
             elapsedSeconds: activeSession.elapsed_seconds,
             route,
           });
+          // TQ-21: crash/kill-safe resume — if the app process was relaunched
+          // mid-expedition, make sure the background task is actually running
+          // again rather than assuming the OS kept it alive.
+          if (activeSession.status === 'active') {
+            startLocationTracking().catch(() => undefined);
+          }
         } else {
           setSession((current) => ({ ...current, route }));
         }
@@ -130,6 +138,34 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(interval);
   }, [session.active, session.paused]);
 
+  // TQ-21: the background task (src/domain/tracking-task.ts) writes points
+  // straight to SQLite without going through this component's state, since
+  // it can run with no React tree mounted at all. Polling the DB is what
+  // makes the map reflect those points, regardless of whether the app was
+  // foregrounded or backgrounded when they were captured.
+  useEffect(() => {
+    if (!session.active || session.paused) return;
+    let cancelled = false;
+    const refresh = async () => {
+      const rows = await persistenceRef.current?.trackPoints.listBySession(LOCAL_SESSION_ID);
+      if (cancelled || !rows || rows.length === 0) return;
+      nextSequenceRef.current = rows.length;
+      const route: TrackPoint[] = rows.slice(-MAX_ROUTE_POINTS).map((point) => ({
+        latitude: point.latitude,
+        longitude: point.longitude,
+        accuracy: point.accuracy ?? null,
+        timestamp: point.capturedAt,
+      }));
+      setSession((current) => ({ ...current, route }));
+    };
+    const interval = setInterval(() => void refresh(), ROUTE_REFRESH_INTERVAL_MS);
+    void refresh();
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [session.active, session.paused]);
+
   const persistSession = useCallback((next: SessionState, status: 'active' | 'paused' | 'completed') => {
     persistenceRef.current?.session
       .upsert({
@@ -155,6 +191,7 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
         persistSession(next, 'active');
         return next;
       });
+      startLocationTracking().catch(() => undefined);
     },
     [persistSession],
   );
@@ -163,6 +200,8 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
     setSession((current) => {
       const next = { ...current, paused: !current.paused };
       persistSession(next, next.paused ? 'paused' : 'active');
+      if (next.paused) stopLocationTracking().catch(() => undefined);
+      else startLocationTracking().catch(() => undefined);
       return next;
     });
   }, [persistSession]);
@@ -173,40 +212,16 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
       persistSession(next, 'completed');
       return next;
     });
+    stopLocationTracking().catch(() => undefined);
     setHasCompletedSession(true);
     persistenceRef.current?.preferences
       .set(HAS_COMPLETED_SESSION_PREFERENCE_KEY, 'true', Date.now())
       .catch(() => undefined);
   }, [persistSession]);
 
-  const addTrackPoint = useCallback((point: TrackPoint) => {
-    setSession((current) => {
-      const previous = current.route.at(-1);
-      if (previous && Math.abs(previous.latitude - point.latitude) < 0.00001 && Math.abs(previous.longitude - point.longitude) < 0.00001) {
-        return current;
-      }
-
-      const sequence = nextSequenceRef.current;
-      nextSequenceRef.current += 1;
-      persistenceRef.current?.trackPoints
-        .insert({
-          sessionId: LOCAL_SESSION_ID,
-          sequence,
-          latitude: point.latitude,
-          longitude: point.longitude,
-          capturedAt: point.timestamp,
-          accuracy: point.accuracy ?? null,
-        })
-        .then(() => persistenceRef.current?.trackPoints.pruneToLast(LOCAL_SESSION_ID, MAX_ROUTE_POINTS))
-        .catch(() => undefined);
-
-      return { ...current, route: [...current.route.slice(-(MAX_ROUTE_POINTS - 1)), point] };
-    });
-  }, []);
-
   const value = useMemo(
-    () => ({ snapshot, quests, session, hasCompletedSession, startSession, togglePause, finishSession, addTrackPoint }),
-    [addTrackPoint, finishSession, hasCompletedSession, quests, session, snapshot, startSession, togglePause],
+    () => ({ snapshot, quests, session, hasCompletedSession, startSession, togglePause, finishSession }),
+    [finishSession, hasCompletedSession, quests, session, snapshot, startSession, togglePause],
   );
 
   return <ExplorerContext.Provider value={value}>{children}</ExplorerContext.Provider>;
