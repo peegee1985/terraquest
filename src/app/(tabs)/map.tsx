@@ -4,7 +4,7 @@ import * as Location from 'expo-location';
 import { useEffect, useState } from 'react';
 import { Alert, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
 
-import { ExplorerMap } from '../../components/map/explorer-map';
+import { ExplorerMap, FogMode } from '../../components/map/explorer-map';
 
 import { PrimaryButton } from '@/components/ui/primitives';
 import { useExplorer } from '@/state/explorer-context';
@@ -19,6 +19,9 @@ function formatDuration(seconds: number) {
 export default function MapScreen() {
   const { session, startSession, togglePause, finishSession, addTrackPoint } = useExplorer();
   const [locationStatus, setLocationStatus] = useState<'idle' | 'granted' | 'denied'>('idle');
+  // TQ-17 prototype toggle: compares the current stroke-mask fog against the
+  // H3-grid reveal candidate for Fáze 3. Remove once TQ-23 picks a winner.
+  const [fogMode, setFogMode] = useState<FogMode>('demo');
 
   useEffect(() => {
     if (!session.active || session.paused) return;
@@ -67,7 +70,7 @@ export default function MapScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
-        <ExplorerMap route={session.route} />
+        <ExplorerMap fogMode={fogMode} route={session.route} />
 
         <View style={styles.topHud}>
           <View style={styles.brandBlock}>
@@ -77,7 +80,12 @@ export default function MapScreen() {
               <Text style={[styles.statusText, { color: status.color }]}>{status.label}</Text>
             </View>
           </View>
-          <Pressable accessibilityLabel="Vrstvy mapy" accessibilityRole="button" style={styles.iconButton}>
+          <Pressable
+            accessibilityLabel={fogMode === 'h3' ? 'Přepnout na demo mlhu' : 'Přepnout na H3 mlhu (prototyp)'}
+            accessibilityRole="button"
+            onPress={() => setFogMode((current) => (current === 'h3' ? 'demo' : 'h3'))}
+            style={[styles.iconButton, fogMode === 'h3' && styles.iconButtonActive]}
+          >
             <MaterialCommunityIcons color={colors.textPrimary} name="layers-triple-outline" size={23} />
           </Pressable>
         </View>
@@ -130,6 +138,7 @@ const styles = StyleSheet.create({
   statusRow: { flexDirection: 'row', gap: 6, alignItems: 'center', marginTop: 4 },
   statusText: { ...typography.caption },
   iconButton: { width: 48, height: 48, borderRadius: 16, backgroundColor: 'rgba(7,17,26,0.92)', borderWidth: 1, borderColor: colors.outline, alignItems: 'center', justifyContent: 'center' },
+  iconButtonActive: { borderColor: colors.brand },
   startPanel: { position: 'absolute', left: spacing.md, right: spacing.md, bottom: spacing.md, backgroundColor: 'rgba(7,17,26,0.96)', borderColor: colors.outline, borderWidth: 1, borderRadius: radii.xl, padding: spacing.md, gap: spacing.md },
   startCopy: { gap: 4 },
   startTitle: { ...typography.h2, color: colors.textPrimary },

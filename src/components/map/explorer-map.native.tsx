@@ -1,10 +1,12 @@
-import MapView, { Circle, Marker, Polygon, Polyline } from 'react-native-maps';
+import { useMemo, useState } from 'react';
+import MapView, { Circle, Marker, Polygon, Polyline, Region } from 'react-native-maps';
 import { StyleSheet, View } from 'react-native';
 
+import { buildFogGeometry, cellsRevealedByRoute, ViewportBounds } from '@/domain/fog';
 import { TrackPoint } from '@/domain/types';
 import { colors } from '@/theme/tokens';
 
-const initialRegion = {
+const initialRegion: Region = {
   latitude: 50.0893,
   longitude: 14.4226,
   latitudeDelta: 0.018,
@@ -30,6 +32,15 @@ function circleHole(center: TrackPoint, radiusMeters = 25, points = 18) {
   });
 }
 
+function boundsFromRegion(region: Region): ViewportBounds {
+  return {
+    minLatitude: region.latitude - region.latitudeDelta / 2,
+    maxLatitude: region.latitude + region.latitudeDelta / 2,
+    minLongitude: region.longitude - region.longitudeDelta / 2,
+    maxLongitude: region.longitude + region.longitudeDelta / 2,
+  };
+}
+
 const darkMapStyle = [
   { elementType: 'geometry', stylers: [{ color: '#132431' }] },
   { elementType: 'labels.text.fill', stylers: [{ color: '#8FA6B5' }] },
@@ -40,15 +51,36 @@ const darkMapStyle = [
   { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#081722' }] },
 ];
 
-export function ExplorerMap({ route }: { route: TrackPoint[] }) {
+export type FogMode = 'demo' | 'h3';
+
+export function ExplorerMap({ route, fogMode = 'demo' }: { route: TrackPoint[]; fogMode?: FogMode }) {
   const current = route.at(-1);
   const coordinates = route.map(({ latitude, longitude }) => ({ latitude, longitude }));
   const holes = route.map((point) => circleHole(point));
+  const [region, setRegion] = useState<Region>(initialRegion);
+
+  // TQ-17 H3 fog prototype: recomputed only when the route grows or the map
+  // settles on a new region (onRegionChangeComplete), not on every drag frame.
+  const revealedCells = useMemo(() => cellsRevealedByRoute(route), [route]);
+  const h3Fog = useMemo(
+    () => (fogMode === 'h3' ? buildFogGeometry(revealedCells, boundsFromRegion(region)) : null),
+    [fogMode, revealedCells, region],
+  );
 
   return (
     <View style={styles.container}>
-      <MapView customMapStyle={darkMapStyle} initialRegion={initialRegion} rotateEnabled={false} style={StyleSheet.absoluteFill}>
-        <Polygon coordinates={fogBoundary} fillColor={colors.fog} holes={holes} strokeColor="transparent" />
+      <MapView
+        customMapStyle={darkMapStyle}
+        initialRegion={initialRegion}
+        onRegionChangeComplete={setRegion}
+        rotateEnabled={false}
+        style={StyleSheet.absoluteFill}
+      >
+        {h3Fog ? (
+          <Polygon coordinates={h3Fog.outerRing} fillColor={colors.fog} holes={h3Fog.holes} strokeColor="transparent" />
+        ) : (
+          <Polygon coordinates={fogBoundary} fillColor={colors.fog} holes={holes} strokeColor="transparent" />
+        )}
         {coordinates.length > 1 ? <Polyline coordinates={coordinates} strokeColor={colors.brand} strokeWidth={5} /> : null}
         {current ? (
           <>
