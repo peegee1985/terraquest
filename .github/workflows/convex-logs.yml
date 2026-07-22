@@ -55,7 +55,6 @@ jobs:
         run: |
           case "${{ inputs.target }}" in
             production) EXTRA_ARGS="--prod" ;;
-            staging) EXTRA_ARGS="--deployment staging" ;;
             *) EXTRA_ARGS="" ;;
           esac
           timeout 30 npx convex logs --success --history "${{ inputs.history }}" $EXTRA_ARGS || true

@@ -21,8 +21,13 @@ if (!['dev', 'staging', 'production'].includes(target ?? '')) {
   process.exit(1);
 }
 
-const extraArgs =
-  target === 'production' ? ['--prod'] : target === 'staging' ? ['--deployment', 'staging'] : [];
+// `staging`'s CONVEX_STAGING_DEPLOY_KEY is already scoped to that one
+// preview deployment, same as dev's/production's deploy keys — no extra
+// `--deployment`/`--preview-name` flag needed (and "--deployment staging"
+// actively fails: the human-readable preview name isn't a valid deployment
+// reference on its own, e.g. the "staging" preview currently resolves to
+// the deployment slug "uncommon-terrier-974").
+const extraArgs = target === 'production' ? ['--prod'] : [];
 
 // `extractable: true` is required so the private key can be exported to
 // PKCS8 below — jose defaults to a non-extractable WebCrypto key otherwise.

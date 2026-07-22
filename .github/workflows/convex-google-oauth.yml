@@ -66,9 +66,11 @@ jobs:
       - name: Set Google OAuth credentials on Convex
         shell: bash
         run: |
+          # CONVEX_DEPLOY_KEY (selected above per target) already scopes the
+          # CLI to the right deployment for dev/staging; only production
+          # additionally needs --prod.
           case "${{ inputs.target }}" in
             production) EXTRA_ARGS="--prod" ;;
-            staging) EXTRA_ARGS="--deployment staging" ;;
             *) EXTRA_ARGS="" ;;
           esac
           FORCE_ARG="${{ inputs.force_overwrite && '--force' || '' }}"
