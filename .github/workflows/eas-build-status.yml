@@ -24,6 +24,9 @@ jobs:
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
       BUILD_ID: ${{ inputs.build_id || 'a62da56d-72b6-4e3e-bf6d-ff9d91ecfc3b' }}
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
       - name: Monitor EAS build
         shell: bash
         run: |
