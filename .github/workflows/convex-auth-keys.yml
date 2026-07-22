@@ -35,7 +35,11 @@ jobs:
     timeout-minutes: 10
     environment: ${{ inputs.target == 'production' && 'production' || '' }}
     env:
-      CONVEX_DEPLOY_KEY: ${{ inputs.target == 'dev' && secrets.CONVEX_DEPLOY_KEY || inputs.target == 'staging' && secrets.CONVEX_STAGING_DEPLOY_KEY || secrets.CONVEX_PROD_DEPLOY_KEY }}
+      # Preview deploy keys (CONVEX_STAGING_DEPLOY_KEY) are explicitly denied
+      # CreateProjectEnvironmentVariable — confirmed via the CLI's own error.
+      # Setting the "preview" deployment-type default (what staging reads
+      # from) needs the full-access personal/dev key instead.
+      CONVEX_DEPLOY_KEY: ${{ inputs.target == 'production' && secrets.CONVEX_PROD_DEPLOY_KEY || secrets.CONVEX_DEPLOY_KEY }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -54,7 +58,7 @@ jobs:
         run: |
           if [ -z "$CONVEX_DEPLOY_KEY" ]; then
             echo "Missing deploy key secret for target '${{ inputs.target }}'."
-            echo "Expected one of: CONVEX_DEPLOY_KEY, CONVEX_STAGING_DEPLOY_KEY, CONVEX_PROD_DEPLOY_KEY."
+            echo "Expected CONVEX_DEPLOY_KEY (used for dev and staging) or CONVEX_PROD_DEPLOY_KEY (production)."
             exit 1
           fi
 
