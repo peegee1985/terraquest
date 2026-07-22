@@ -1,0 +1,40 @@
+name: Inspect EAS Environments
+
+# One-off diagnostic: prints which EXPO_PUBLIC_CONVEX_URL (and other vars)
+# are actually configured per EAS environment (development/preview/production),
+# so we know for certain which Convex deployment a given build talks to
+# without needing to rebuild and test on-device.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: List development environment
+        run: npx eas-cli@latest env:list development --scope project --format long || true
+
+      - name: List preview environment
+        run: npx eas-cli@latest env:list preview --scope project --format long || true
+
+      - name: List production environment
+        run: npx eas-cli@latest env:list production --scope project --format long || true
