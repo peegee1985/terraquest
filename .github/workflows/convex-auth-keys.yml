@@ -1,0 +1,65 @@
+name: Set Convex Auth Keys
+
+# One-time (or key-rotation) setup for TQ-18 (Convex Auth). Generates a fresh
+# RS256 keypair and sets JWT_PRIVATE_KEY / JWKS on the chosen Convex
+# deployment. This has to run in CI because this project's sandbox has no
+# authenticated Convex CLI session — see scripts/generate-convex-auth-keys.mjs.
+#
+# Run this once per deployment (dev, staging, production) before relying on
+# sign-in. Re-running with force_overwrite rotates the keys and invalidates
+# every existing session on that deployment.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Which Convex deployment to set JWT_PRIVATE_KEY/JWKS on
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - production
+      force_overwrite:
+        description: Overwrite existing keys (rotates them, signs everyone out)
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  set-auth-keys:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.target == 'production' && 'production' || '' }}
+    env:
+      CONVEX_DEPLOY_KEY: ${{ inputs.target == 'dev' && secrets.CONVEX_DEPLOY_KEY || inputs.target == 'staging' && secrets.CONVEX_STAGING_DEPLOY_KEY || secrets.CONVEX_PROD_DEPLOY_KEY }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify required secret
+        shell: bash
+        run: |
+          if [ -z "$CONVEX_DEPLOY_KEY" ]; then
+            echo "Missing deploy key secret for target '${{ inputs.target }}'."
+            echo "Expected one of: CONVEX_DEPLOY_KEY, CONVEX_STAGING_DEPLOY_KEY, CONVEX_PROD_DEPLOY_KEY."
+            exit 1
+          fi
+
+      - name: Generate and set JWT_PRIVATE_KEY / JWKS
+        run: >-
+          node scripts/generate-convex-auth-keys.mjs
+          ${{ inputs.target }}
+          ${{ inputs.force_overwrite && '--force' || '' }}

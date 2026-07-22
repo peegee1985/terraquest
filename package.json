@@ -6,6 +6,8 @@
   "main": "expo-router/entry",
   "version": "0.1.0",
   "dependencies": {
+    "@auth/core": "^0.41.3",
+    "@convex-dev/auth": "^0.0.94",
     "@expo/ui": "~57.0.7",
     "@expo/vector-icons": "^15.0.2",
     "@react-native-async-storage/async-storage": "2.2.0",
@@ -31,6 +33,7 @@
     "expo-symbols": "~57.0.1",
     "expo-system-ui": "~57.0.1",
     "expo-web-browser": "~57.0.1",
+    "jwt-decode": "^4.0.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.0",
@@ -48,6 +51,7 @@
     "@types/react": "~19.2.2",
     "eslint": "^9.39.5",
     "eslint-config-expo": "^57.0.0",
+    "jose": "^6.2.4",
     "typescript": "~6.0.3",
     "vitest": "^4.1.10"
   },

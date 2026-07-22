@@ -5,6 +5,7 @@ import { useRouter } from 'expo-router';
 import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Card, Eyebrow, PrimaryButton, Screen } from '@/components/ui/primitives';
+import { useAuthIdentity } from '@/state/auth-context';
 import { colors, radii, spacing, typography } from '@/theme/tokens';
 
 const privacyActions = [
@@ -15,6 +16,8 @@ const privacyActions = [
 
 export default function SettingsScreen() {
   const router = useRouter();
+  const identity = useAuthIdentity();
+  const isGuest = identity?.isAnonymous ?? true;
 
   const requestBackground = async () => {
     const foreground = await Location.getForegroundPermissionsAsync();
@@ -45,6 +48,23 @@ export default function SettingsScreen() {
       <Eyebrow>Nastavení</Eyebrow>
       <Text style={styles.title}>Soukromí pod kontrolou</Text>
       <Text style={styles.body}>Poloha je citlivý údaj. TerraQuest vysvětluje každý požadavek a umožní data exportovat i smazat.</Text>
+
+      <Pressable accessibilityRole="button" onPress={() => router.push('/account')}>
+        <Card style={styles.permissionCard}>
+          <View style={styles.permissionIcon}>
+            <MaterialCommunityIcons color={colors.brand} name={isGuest ? 'account-outline' : 'account-check-outline'} size={28} />
+          </View>
+          <View style={styles.permissionCopy}>
+            <Text style={styles.cardTitle}>{isGuest ? 'Hraješ jako host' : 'Účet propojený'}</Text>
+            <Text style={styles.cardBody}>
+              {isGuest
+                ? 'Založ si účet, ať progres nezmizí při přeinstalaci nebo výměně telefonu.'
+                : (identity?.email ?? identity?.handle ?? 'Spravovat účet')}
+            </Text>
+          </View>
+          <MaterialCommunityIcons color={colors.textDisabled} name="chevron-right" size={22} />
+        </Card>
+      </Pressable>
 
       <Card style={styles.permissionCard}>
         <View style={styles.permissionIcon}>

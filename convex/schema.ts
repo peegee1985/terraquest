@@ -1,12 +1,31 @@
+import { authTables } from '@convex-dev/auth/server';
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 
-// Schema version v0.1.1 — initial cloud deployment baseline.
+// Schema version v0.2.0 — adds Convex Auth (TQ-18).
 
 const movementMode = v.union(v.literal('walk'), v.literal('run'), v.literal('bike'), v.literal('auto'));
 
+// `authTables.users` is replaced by our own inlined `users` definition below,
+// so it's excluded here to avoid clobbering the app-specific fields.
+const { users: _authUsersTable, ...otherAuthTables } = authTables;
+
 export default defineSchema({
+  // `users` inlines the fields required by @convex-dev/auth (name, image,
+  // email(+verified), phone(+verified), isAnonymous) alongside TerraQuest's
+  // own profile fields, instead of spreading `authTables.users`, so that the
+  // required app fields (handle, avatarId, ...) stay part of the schema.
+  // See node_modules/@convex-dev/auth/src/server/implementation/types.ts.
   users: defineTable({
+    // Auth-managed fields.
+    name: v.optional(v.string()),
+    image: v.optional(v.string()),
+    email: v.optional(v.string()),
+    emailVerificationTime: v.optional(v.number()),
+    phone: v.optional(v.string()),
+    phoneVerificationTime: v.optional(v.number()),
+    isAnonymous: v.optional(v.boolean()),
+    // TerraQuest profile fields.
     handle: v.string(),
     displayName: v.optional(v.string()),
     avatarId: v.string(),
@@ -16,7 +35,12 @@ export default defineSchema({
     consentVersion: v.string(),
     createdAt: v.number(),
     updatedAt: v.number(),
-  }).index('by_handle', ['handle']),
+  })
+    .index('by_handle', ['handle'])
+    .index('email', ['email'])
+    .index('phone', ['phone']),
+
+  ...otherAuthTables,
 
   userStats: defineTable({
     userId: v.id('users'),

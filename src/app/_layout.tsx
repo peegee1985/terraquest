@@ -1,9 +1,10 @@
-import { ConvexProvider, ConvexReactClient } from 'convex/react';
+import { ConvexReactClient } from 'convex/react';
 import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { ReactNode, useEffect } from 'react';
 
 import { AppErrorBoundary } from '@/components/app-error-boundary';
+import { AuthProvider } from '@/state/auth-context';
 import { ExplorerProvider } from '@/state/explorer-context';
 import { colors } from '@/theme/tokens';
 
@@ -27,7 +28,7 @@ const navigationTheme = {
 
 function BackendProvider({ children }: { children: ReactNode }) {
   if (!convex) return children;
-  return <ConvexProvider client={convex}>{children}</ConvexProvider>;
+  return <AuthProvider client={convex}>{children}</AuthProvider>;
 }
 
 export default function RootLayout() {
