@@ -1,6 +1,11 @@
 name: EAS Development Build
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/eas-development.yml
   workflow_dispatch:
 
 permissions:
