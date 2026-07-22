@@ -1,7 +1,7 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 
-// Schema version v0.1 — initial cloud deployment baseline.
+// Schema version v0.1.1 — initial cloud deployment baseline.
 
 const movementMode = v.union(v.literal('walk'), v.literal('run'), v.literal('bike'), v.literal('auto'));
 
