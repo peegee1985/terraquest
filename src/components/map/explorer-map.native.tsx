@@ -1,102 +1,210 @@
-import { useMemo, useState } from 'react';
-import MapView, { Circle, Marker, Polygon, Polyline, Region } from 'react-native-maps';
+import { ComponentType, RefAttributes, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
+import RNWebView, { type WebViewMessageEvent, type WebViewProps } from 'react-native-webview';
 
-import { buildFogGeometry, cellsRevealedByRoute, ViewportBounds } from '@/domain/fog';
+import { buildFogGeometry, cellsRevealedByRoute, LatLng, ViewportBounds } from '@/domain/fog';
 import { TrackPoint } from '@/domain/types';
 import { colors } from '@/theme/tokens';
 
-const initialRegion: Region = {
-  latitude: 50.0893,
-  longitude: 14.4226,
-  latitudeDelta: 0.018,
-  longitudeDelta: 0.018,
-};
-
-const fogBoundary = [
-  { latitude: 51.5, longitude: 12.0 },
-  { latitude: 51.5, longitude: 17.0 },
-  { latitude: 48.5, longitude: 17.0 },
-  { latitude: 48.5, longitude: 12.0 },
-];
-
-function circleHole(center: TrackPoint, radiusMeters = 25, points = 18) {
-  const latitudeRadius = radiusMeters / 111_320;
-  const longitudeRadius = radiusMeters / (111_320 * Math.cos((center.latitude * Math.PI) / 180));
-  return Array.from({ length: points }, (_, index) => {
-    const angle = (index / points) * Math.PI * 2;
-    return {
-      latitude: center.latitude + Math.sin(angle) * latitudeRadius,
-      longitude: center.longitude + Math.cos(angle) * longitudeRadius,
-    };
-  });
-}
-
-function boundsFromRegion(region: Region): ViewportBounds {
-  return {
-    minLatitude: region.latitude - region.latitudeDelta / 2,
-    maxLatitude: region.latitude + region.latitudeDelta / 2,
-    minLongitude: region.longitude - region.longitudeDelta / 2,
-    maxLongitude: region.longitude + region.longitudeDelta / 2,
-  };
-}
-
-const darkMapStyle = [
-  { elementType: 'geometry', stylers: [{ color: '#132431' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#8FA6B5' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#09131B' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#294153' }] },
-  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#182B39' }] },
-  { featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#081722' }] },
-];
+// react-native-webview types WebView as `class WebView<P = undefined>`, which
+// collapses JSX prop typing to `never` (P defaults to undefined, and
+// WebViewProps & undefined isn't usable). Recast to a normal component type.
+const WebView = RNWebView as unknown as ComponentType<WebViewProps & RefAttributes<RNWebView>>;
 
 export type FogMode = 'demo' | 'h3';
 
-export function ExplorerMap({ route, fogMode = 'demo' }: { route: TrackPoint[]; fogMode?: FogMode }) {
-  const current = route.at(-1);
-  const coordinates = route.map(({ latitude, longitude }) => ({ latitude, longitude }));
-  const holes = route.map((point) => circleHole(point));
-  const [region, setRegion] = useState<Region>(initialRegion);
+const INITIAL_CENTER: [number, number] = [50.0893, 14.4226];
+const INITIAL_ZOOM = 15;
 
-  // TQ-17 H3 fog prototype: only touches h3-js when the layer toggle is on
-  // (never on the default 'demo' path), and never lets a prototype-only
-  // failure crash the whole map screen — falls back to the demo fog instead.
-  const h3Fog = useMemo(() => {
-    if (fogMode !== 'h3') return null;
-    try {
-      const revealedCells = cellsRevealedByRoute(route);
-      return buildFogGeometry(revealedCells, boundsFromRegion(region));
-    } catch (error) {
-      console.warn('[TQ-17] H3 fog prototype failed, falling back to demo fog', error);
-      return null;
+/** Fixed backdrop for the demo fog — matches the old react-native-maps fogBoundary. */
+const DEMO_OUTER_RING: [number, number][] = [
+  [51.5, 12.0],
+  [51.5, 17.0],
+  [48.5, 17.0],
+  [48.5, 12.0],
+];
+
+function circleHoleRing(point: TrackPoint, radiusMeters = 25, points = 18): [number, number][] {
+  const latRadius = radiusMeters / 111_320;
+  const lngRadius = radiusMeters / (111_320 * Math.cos((point.latitude * Math.PI) / 180));
+  return Array.from({ length: points }, (_, index) => {
+    const angle = (index / points) * Math.PI * 2;
+    return [point.latitude + Math.sin(angle) * latRadius, point.longitude + Math.cos(angle) * lngRadius] as [number, number];
+  });
+}
+
+function ringToPairs(ring: LatLng[]): [number, number][] {
+  return ring.map((point) => [point.latitude, point.longitude]);
+}
+
+type MapPayload = {
+  route: [number, number][];
+  current: { lat: number; lng: number } | null;
+  fog: { outerRing: [number, number][]; holes: [number, number][][] };
+};
+
+const DEFAULT_BOUNDS: ViewportBounds = {
+  minLatitude: INITIAL_CENTER[0] - 0.01,
+  maxLatitude: INITIAL_CENTER[0] + 0.01,
+  minLongitude: INITIAL_CENTER[1] - 0.01,
+  maxLongitude: INITIAL_CENTER[1] + 0.01,
+};
+
+export function ExplorerMap({ route, fogMode = 'demo' }: { route: TrackPoint[]; fogMode?: FogMode }) {
+  const webviewRef = useRef<RNWebView>(null);
+  const [ready, setReady] = useState(false);
+  // Reported by the Leaflet page on 'moveend' — only needed for H3 viewport
+  // culling; the demo fog uses a fixed backdrop and ignores this.
+  const [bounds, setBounds] = useState<ViewportBounds>(DEFAULT_BOUNDS);
+
+  const payload = useMemo<MapPayload>(() => {
+    const routePairs = route.map((point) => [point.latitude, point.longitude] as [number, number]);
+    const current = route.at(-1);
+    const currentPayload = current ? { lat: current.latitude, lng: current.longitude } : null;
+
+    if (fogMode === 'h3') {
+      try {
+        const revealedCells = cellsRevealedByRoute(route);
+        const geometry = buildFogGeometry(revealedCells, bounds);
+        return {
+          route: routePairs,
+          current: currentPayload,
+          fog: { outerRing: ringToPairs(geometry.outerRing), holes: geometry.holes.map(ringToPairs) },
+        };
+      } catch (error) {
+        console.warn('[TQ-17] H3 fog prototype failed, falling back to demo fog', error);
+      }
     }
-  }, [fogMode, route, region]);
+
+    return {
+      route: routePairs,
+      current: currentPayload,
+      fog: { outerRing: DEMO_OUTER_RING, holes: route.map((point) => circleHoleRing(point)) },
+    };
+  }, [route, fogMode, bounds]);
+
+  useEffect(() => {
+    if (!ready) return;
+    webviewRef.current?.injectJavaScript(`window.updateMap(${JSON.stringify(payload)}); true;`);
+  }, [payload, ready]);
+
+  const handleMessage = (event: WebViewMessageEvent) => {
+    try {
+      const message = JSON.parse(event.nativeEvent.data) as
+        | { type: 'ready' }
+        | { type: 'bounds'; minLatitude: number; maxLatitude: number; minLongitude: number; maxLongitude: number };
+      if (message.type === 'ready') setReady(true);
+      if (message.type === 'bounds') {
+        setBounds({
+          minLatitude: message.minLatitude,
+          maxLatitude: message.maxLatitude,
+          minLongitude: message.minLongitude,
+          maxLongitude: message.maxLongitude,
+        });
+      }
+    } catch {
+      // Ignore anything that doesn't match the Leaflet bridge contract.
+    }
+  };
 
   return (
     <View style={styles.container}>
-      <MapView
-        customMapStyle={darkMapStyle}
-        initialRegion={initialRegion}
-        onRegionChangeComplete={setRegion}
-        rotateEnabled={false}
-        style={StyleSheet.absoluteFill}
-      >
-        {h3Fog ? (
-          <Polygon coordinates={h3Fog.outerRing} fillColor={colors.fog} holes={h3Fog.holes} strokeColor="transparent" />
-        ) : (
-          <Polygon coordinates={fogBoundary} fillColor={colors.fog} holes={holes} strokeColor="transparent" />
-        )}
-        {coordinates.length > 1 ? <Polyline coordinates={coordinates} strokeColor={colors.brand} strokeWidth={5} /> : null}
-        {current ? (
-          <>
-            <Circle center={current} fillColor="rgba(56,230,138,0.14)" radius={35} strokeColor="rgba(56,230,138,0.5)" />
-            <Marker coordinate={current} pinColor={colors.brand} />
-          </>
-        ) : null}
-      </MapView>
+      <WebView
+        ref={webviewRef}
+        source={{ html: leafletHtml, baseUrl: 'https://terraquest.app' }}
+        style={styles.webview}
+        originWhitelist={['*']}
+        javaScriptEnabled
+        domStorageEnabled
+        allowFileAccess={false}
+        setSupportMultipleWindows={false}
+        onMessage={handleMessage}
+        accessibilityLabel="Leaflet mapa průzkumu"
+      />
     </View>
   );
 }
 
-const styles = StyleSheet.create({ container: { flex: 1, backgroundColor: colors.background } });
+/**
+ * react-native-maps required a Google Maps API key that was never configured,
+ * which crashed the app the instant MapView mounted. Leaflet + OpenStreetMap
+ * (via CARTO's free dark tiles) needs no API key at all — same approach
+ * already proven in production for the Kuryr4You dispatcher app.
+ */
+const leafletHtml = `<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <style>
+    html,body,#map{height:100%;width:100%;margin:0;background:${colors.background}}
+    .leaflet-container{background:${colors.background}}
+    .leaflet-control-attribution{font-size:9px!important;background:rgba(7,17,26,.82)!important;color:#8FA6B5!important}
+    .leaflet-control-attribution a{color:${colors.brand}!important}
+    .leaflet-control-zoom a{background:${colors.background}!important;color:#EDF0F7!important;border-color:${colors.outline}!important}
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin="" onerror="window.ReactNativeWebView.postMessage(JSON.stringify({type:'error'}))"></script>
+  <script>
+    (function () {
+      var map = L.map('map', { zoomControl: false, attributionControl: true }).setView([${INITIAL_CENTER[0]}, ${INITIAL_CENTER[1]}], ${INITIAL_ZOOM});
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        maxZoom: 20,
+        subdomains: 'abcd',
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      }).addTo(map);
+      L.control.zoom({ position: 'topright' }).addTo(map);
+
+      var fogLayer = null;
+      var routeLayer = null;
+      var currentMarker = null;
+      var accuracyCircle = null;
+
+      function postBounds() {
+        var bounds = map.getBounds();
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'bounds',
+          minLatitude: bounds.getSouth(),
+          maxLatitude: bounds.getNorth(),
+          minLongitude: bounds.getWest(),
+          maxLongitude: bounds.getEast(),
+        }));
+      }
+      map.on('moveend', postBounds);
+
+      window.updateMap = function (data) {
+        if (fogLayer) map.removeLayer(fogLayer);
+        var rings = [data.fog.outerRing].concat(data.fog.holes);
+        fogLayer = L.polygon(rings, { stroke: false, fillColor: '${colors.fog}', fillOpacity: 1, interactive: false }).addTo(map);
+
+        if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
+        if (data.route.length > 1) {
+          routeLayer = L.polyline(data.route, { color: '${colors.brand}', weight: 5, interactive: false }).addTo(map);
+        }
+
+        if (currentMarker) { map.removeLayer(currentMarker); currentMarker = null; }
+        if (accuracyCircle) { map.removeLayer(accuracyCircle); accuracyCircle = null; }
+        if (data.current) {
+          accuracyCircle = L.circle([data.current.lat, data.current.lng], {
+            radius: 35, color: 'rgba(56,230,138,0.5)', fillColor: 'rgba(56,230,138,0.14)', fillOpacity: 1, interactive: false,
+          }).addTo(map);
+          currentMarker = L.circleMarker([data.current.lat, data.current.lng], {
+            radius: 8, color: '#F5F7F4', weight: 2, fillColor: '${colors.brand}', fillOpacity: 1, interactive: false,
+          }).addTo(map);
+        }
+      };
+
+      window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ready' }));
+      postBounds();
+    })();
+  </script>
+</body>
+</html>`;
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.background },
+  webview: { flex: 1, backgroundColor: colors.background },
+});
