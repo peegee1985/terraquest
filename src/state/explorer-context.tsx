@@ -2,6 +2,8 @@ import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, 
 
 import { demoQuests, demoRoute, demoSnapshot } from '@/data/demo';
 import { getLocalPersistence, type LocalPersistence } from '@/data/local';
+import { filterRoute } from '@/domain/gps-filter';
+import { classifyMovement, computeRollingSpeedMps } from '@/domain/movement';
 import { MovementMode, Quest, TrackPoint } from '@/domain/types';
 import { LOCAL_SESSION_ID, startLocationTracking, stopLocationTracking } from '@/domain/tracking-task';
 
@@ -73,13 +75,17 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         setHasCompletedSession(hasCompletedSessionValue === 'true');
 
+        // TQ-22: filter on read too — points written before this filter
+        // existed (or a background-task edge case) could still carry a jump.
         const route: TrackPoint[] = storedRoute.length
-          ? storedRoute.map((point) => ({
-              latitude: point.latitude,
-              longitude: point.longitude,
-              accuracy: point.accuracy ?? null,
-              timestamp: point.capturedAt,
-            }))
+          ? filterRoute(
+              storedRoute.map((point) => ({
+                latitude: point.latitude,
+                longitude: point.longitude,
+                accuracy: point.accuracy ?? null,
+                timestamp: point.capturedAt,
+              })),
+            )
           : demoRoute;
         nextSequenceRef.current = storedRoute.length;
 
@@ -150,13 +156,18 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
       const rows = await persistenceRef.current?.trackPoints.listBySession(LOCAL_SESSION_ID);
       if (cancelled || !rows || rows.length === 0) return;
       nextSequenceRef.current = rows.length;
-      const route: TrackPoint[] = rows.slice(-MAX_ROUTE_POINTS).map((point) => ({
-        latitude: point.latitude,
-        longitude: point.longitude,
-        accuracy: point.accuracy ?? null,
-        timestamp: point.capturedAt,
-      }));
-      setSession((current) => ({ ...current, route }));
+      // TQ-22: a single bad GPS sample (jump/teleport) must not damage the
+      // displayed route or feed a bogus speed into movement classification.
+      const route = filterRoute(
+        rows.slice(-MAX_ROUTE_POINTS).map((point) => ({
+          latitude: point.latitude,
+          longitude: point.longitude,
+          accuracy: point.accuracy ?? null,
+          timestamp: point.capturedAt,
+        })),
+      );
+      const speedMps = computeRollingSpeedMps(route);
+      setSession((current) => ({ ...current, route, mode: classifyMovement(speedMps, current.mode) }));
     };
     const interval = setInterval(() => void refresh(), ROUTE_REFRESH_INTERVAL_MS);
     void refresh();
