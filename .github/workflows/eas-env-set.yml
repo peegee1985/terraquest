@@ -1,0 +1,66 @@
+name: Set EAS Environment Variable
+
+# General-purpose one-off: sets a single EAS environment variable (e.g.
+# EXPO_PUBLIC_CONVEX_URL) on the given EAS environment. Overwrites any
+# existing value for that name (--force), since this is meant for
+# deliberate reconfiguration, not routine automation.
+#
+# Non-secret values only: workflow_dispatch inputs are visible in the
+# Actions UI/run history. Don't use this for anything sensitive — use a
+# dedicated secret-backed workflow instead (see convex-google-oauth.yml).
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: EAS environment to set the variable on
+        required: true
+        type: choice
+        options:
+          - development
+          - preview
+          - production
+      name:
+        description: Environment variable name
+        required: true
+      value:
+        description: Environment variable value
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  set-env:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify Expo authentication
+        run: npx eas-cli@latest whoami
+
+      - name: Set variable
+        run: >-
+          npx eas-cli@latest env:create ${{ inputs.environment }}
+          --name "${{ inputs.name }}"
+          --value "${{ inputs.value }}"
+          --visibility plaintext
+          --scope project
+          --force
+          --non-interactive
+
+      - name: Verify
+        run: npx eas-cli@latest env:list ${{ inputs.environment }} --scope project --format long
