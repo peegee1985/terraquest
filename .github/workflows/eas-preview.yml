@@ -1,0 +1,41 @@
+name: EAS Preview Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify Expo authentication
+        run: npx eas-cli@latest whoami
+
+      - name: Verify EAS project link
+        run: npx eas-cli@latest project:info
+
+      - name: Start Android preview build
+        run: >-
+          npx eas-cli@latest build
+          --platform android
+          --profile preview
+          --message "TerraQuest preview checkpoint"
+          --non-interactive
+          --wait
