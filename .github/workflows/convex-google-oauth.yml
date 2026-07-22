@@ -66,14 +66,21 @@ jobs:
       - name: Set Google OAuth credentials on Convex
         shell: bash
         run: |
-          # CONVEX_DEPLOY_KEY (selected above per target) already scopes the
-          # CLI to the right deployment for dev/staging; only production
-          # additionally needs --prod.
-          case "${{ inputs.target }}" in
-            production) EXTRA_ARGS="--prod" ;;
-            *) EXTRA_ARGS="" ;;
-          esac
-          FORCE_ARG="${{ inputs.force_overwrite && '--force' || '' }}"
-          printf '%s' "$AUTH_GOOGLE_ID" | npx convex env set AUTH_GOOGLE_ID $EXTRA_ARGS $FORCE_ARG
-          printf '%s' "$AUTH_GOOGLE_SECRET" | npx convex env set AUTH_GOOGLE_SECRET $EXTRA_ARGS $FORCE_ARG
+          # `env set` works directly for dev/production. The staging preview
+          # deploy key isn't authorized to `env set` its own deployment
+          # (confirmed: fails with "Not authorized" regardless of flags) —
+          # it has to go through project-level default env vars instead,
+          # which preview deployments read from.
+          if [ "${{ inputs.target }}" = "staging" ]; then
+            SET_CMD=(npx convex env default set --type preview)
+          elif [ "${{ inputs.target }}" = "production" ]; then
+            SET_CMD=(npx convex env set --prod)
+          else
+            SET_CMD=(npx convex env set)
+          fi
+          if [ "${{ inputs.force_overwrite }}" = "true" ]; then
+            SET_CMD+=(--force)
+          fi
+          printf '%s' "$AUTH_GOOGLE_ID" | "${SET_CMD[@]}" AUTH_GOOGLE_ID
+          printf '%s' "$AUTH_GOOGLE_SECRET" | "${SET_CMD[@]}" AUTH_GOOGLE_SECRET
           echo "AUTH_GOOGLE_ID and AUTH_GOOGLE_SECRET set on the '${{ inputs.target }}' Convex deployment."

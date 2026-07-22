@@ -21,12 +21,13 @@ if (!['dev', 'staging', 'production'].includes(target ?? '')) {
   process.exit(1);
 }
 
-// `staging`'s CONVEX_STAGING_DEPLOY_KEY is already scoped to that one
-// preview deployment, same as dev's/production's deploy keys — no extra
-// `--deployment`/`--preview-name` flag needed (and "--deployment staging"
-// actively fails: the human-readable preview name isn't a valid deployment
-// reference on its own, e.g. the "staging" preview currently resolves to
-// the deployment slug "uncommon-terrier-974").
+// `production`/`dev` deploy keys can `env set` directly on their own
+// deployment. `CONVEX_STAGING_DEPLOY_KEY` (a preview deploy key) cannot —
+// `env set` on it fails with "Not authorized" regardless of flags, since
+// preview deploy keys aren't permitted to mutate their own deployment's
+// env vars directly. The supported mechanism instead is project-level
+// *default* env vars per deployment type (`env default set ... --type
+// preview`), which preview deployments read from.
 const extraArgs = target === 'production' ? ['--prod'] : [];
 
 // `extractable: true` is required so the private key can be exported to
@@ -38,7 +39,10 @@ const jwks = JSON.stringify({ keys: [{ use: 'sig', ...publicKey }] });
 const jwtPrivateKey = privateKey.trimEnd().replace(/\n/g, ' ');
 
 function setEnvVar(name, value) {
-  const args = ['convex', 'env', 'set', name, ...extraArgs, ...(force ? ['--force'] : [])];
+  const args =
+    target === 'staging'
+      ? ['convex', 'env', 'default', 'set', name, '--type', 'preview', ...(force ? ['--force'] : [])]
+      : ['convex', 'env', 'set', name, ...extraArgs, ...(force ? ['--force'] : [])];
   const result = spawnSync('npx', args, { input: value, stdio: ['pipe', 'inherit', 'inherit'] });
   if (result.status !== 0) {
     console.error(`Failed to set ${name} on target "${target}".`);
