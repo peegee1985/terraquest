@@ -31,6 +31,16 @@ EXPO_PUBLIC_CONVEX_URL=https://tough-shepherd-707.convex.cloud
 
 Backend changes under `convex/**` are deployed by the read-only GitHub Actions workflow using the `CONVEX_DEPLOY_KEY` repository secret. The app intentionally retains local demo state when Convex is unavailable.
 
+## EAS environments
+
+`eas.json` defines three isolated build profiles:
+
+- `development`: internal Expo development client
+- `preview`: internally distributed Android APK using the EAS `preview` environment
+- `production`: store build using the EAS `production` environment
+
+Set `EXPO_PUBLIC_CONVEX_URL` separately in each matching EAS environment. The value is public client configuration; Convex deployment keys remain only in protected CI secrets.
+
 ## Validation
 
 ```bash
