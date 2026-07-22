@@ -1,6 +1,23 @@
-import { cellToBoundary, getHexagonAreaAvg, getHexagonEdgeLengthAvg, gridDisk, latLngToCell } from 'h3-js';
-
 import { TrackPoint } from './types';
+
+/**
+ * h3-js is a ~550KB Emscripten-derived module with top-level setup code
+ * that runs the moment it's `require`'d — not just when its functions are
+ * called. Expo Router lazily requires a tab's module graph on first visit,
+ * so a plain top-level `import ... from 'h3-js'` in explorer-map.native.tsx
+ * meant that graph load (not any H3 call) ran the instant the map screen
+ * was first opened. Loading it lazily here, on first actual use, keeps
+ * that load off the map screen's default (non-H3) path entirely.
+ */
+type H3Module = typeof import('h3-js');
+let h3Module: H3Module | null = null;
+function getH3(): H3Module {
+  if (!h3Module) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- intentional lazy load, see comment above
+    h3Module = require('h3-js') as H3Module;
+  }
+  return h3Module;
+}
 
 /**
  * H3 resolution comparison for fog-of-war reveal (docs 02, "Otevřené
@@ -16,8 +33,9 @@ export const RESOLUTION: FogResolution = 11;
 const REVEAL_RING_SIZE = 1;
 
 export function cellsRevealedByPoint(point: TrackPoint, resolution: FogResolution = RESOLUTION): string[] {
-  const center = latLngToCell(point.latitude, point.longitude, resolution);
-  return gridDisk(center, REVEAL_RING_SIZE);
+  const h3 = getH3();
+  const center = h3.latLngToCell(point.latitude, point.longitude, resolution);
+  return h3.gridDisk(center, REVEAL_RING_SIZE);
 }
 
 export function cellsRevealedByRoute(route: readonly TrackPoint[], resolution: FogResolution = RESOLUTION): Set<string> {
@@ -31,7 +49,9 @@ export function cellsRevealedByRoute(route: readonly TrackPoint[], resolution: F
 export type LatLng = { latitude: number; longitude: number };
 
 export function cellBoundaryLatLng(h3Index: string): LatLng[] {
-  return cellToBoundary(h3Index, false).map(([latitude, longitude]) => ({ latitude, longitude }));
+  return getH3()
+    .cellToBoundary(h3Index, false)
+    .map(([latitude, longitude]) => ({ latitude, longitude }));
 }
 
 export type ViewportBounds = {
@@ -60,7 +80,7 @@ export function isCellCenterInViewport(h3Index: string, bounds: ViewportBounds, 
 }
 
 function cellToBoundaryCenter(h3Index: string): [number, number] {
-  const boundary = cellToBoundary(h3Index, false);
+  const boundary = getH3().cellToBoundary(h3Index, false);
   const sum = boundary.reduce((acc, [lat, lng]) => [acc[0] + lat, acc[1] + lng], [0, 0]);
   return [sum[0] / boundary.length, sum[1] / boundary.length];
 }
@@ -105,9 +125,10 @@ export type ResolutionStats = {
 
 /** Real H3 geometry constants per resolution — used to document the TQ-17 decision. */
 export function resolutionStats(resolution: FogResolution): ResolutionStats {
+  const h3 = getH3();
   return {
     resolution,
-    averageCellAreaM2: getHexagonAreaAvg(resolution, 'm2'),
-    averageEdgeLengthM: getHexagonEdgeLengthAvg(resolution, 'm'),
+    averageCellAreaM2: h3.getHexagonAreaAvg(resolution, 'm2'),
+    averageEdgeLengthM: h3.getHexagonEdgeLengthAvg(resolution, 'm'),
   };
 }

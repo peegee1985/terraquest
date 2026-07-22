@@ -3,6 +3,7 @@ import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { ReactNode, useEffect } from 'react';
 
+import { AppErrorBoundary } from '@/components/app-error-boundary';
 import { ExplorerProvider } from '@/state/explorer-context';
 import { colors } from '@/theme/tokens';
 
@@ -35,14 +36,16 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <BackendProvider>
-      <ExplorerProvider>
-        <ThemeProvider value={navigationTheme}>
-          <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
-            <Stack.Screen name="(tabs)" />
-          </Stack>
-        </ThemeProvider>
-      </ExplorerProvider>
-    </BackendProvider>
+    <AppErrorBoundary>
+      <BackendProvider>
+        <ExplorerProvider>
+          <ThemeProvider value={navigationTheme}>
+            <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
+              <Stack.Screen name="(tabs)" />
+            </Stack>
+          </ThemeProvider>
+        </ExplorerProvider>
+      </BackendProvider>
+    </AppErrorBoundary>
   );
 }
