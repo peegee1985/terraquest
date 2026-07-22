@@ -2,6 +2,10 @@ name: Deploy Convex
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'convex/**'
 
 permissions:
   contents: read
