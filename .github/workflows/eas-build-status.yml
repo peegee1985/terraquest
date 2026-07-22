@@ -1,0 +1,50 @@
+name: EAS Build Status
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/eas-build-status.yml
+  workflow_dispatch:
+    inputs:
+      build_id:
+        description: EAS build ID to monitor
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      BUILD_ID: ${{ inputs.build_id || 'a62da56d-72b6-4e3e-bf6d-ff9d91ecfc3b' }}
+    steps:
+      - name: Monitor EAS build
+        shell: bash
+        run: |
+          for attempt in $(seq 1 50); do
+            npx --yes eas-cli@21.0.2 build:view "$BUILD_ID" --json > /tmp/eas-build.json
+            status=$(jq -r '.status | ascii_downcase' /tmp/eas-build.json)
+            echo "EAS build status: $status (check $attempt/50)"
+
+            case "$status" in
+              finished)
+                jq '{id, status, platform, artifacts, buildProfile, createdAt, completedAt}' /tmp/eas-build.json
+                exit 0
+                ;;
+              errored|canceled)
+                jq '{id, status, platform, error, createdAt, completedAt}' /tmp/eas-build.json
+                exit 1
+                ;;
+            esac
+
+            sleep 30
+          done
+
+          echo "EAS build did not reach a terminal state within 25 minutes."
+          exit 1
