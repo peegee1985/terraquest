@@ -1,0 +1,81 @@
+name: Set Convex Environment Variable
+
+# General-purpose one-off for non-secret Convex env vars (e.g. SITE_URL).
+# dev/production deploy keys can `env set` directly on their own
+# deployment. Staging (a preview deployment) needs the project-level
+# "preview" default instead (see convex-auth-keys.yml/convex-google-oauth.yml
+# for why — preview deploy keys are denied CreateProjectEnvironmentVariable).
+#
+# Non-secret values only: workflow_dispatch inputs are visible in the
+# Actions UI/run history. For secrets, add a dedicated secret-backed
+# workflow instead (see convex-google-oauth.yml).
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Which Convex deployment to set the variable on
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - production
+      name:
+        description: Environment variable name
+        required: true
+      value:
+        description: Environment variable value
+        required: true
+      force_overwrite:
+        description: Overwrite existing value if already set
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  set-env:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.target == 'production' && 'production' || '' }}
+    env:
+      CONVEX_DEPLOY_KEY: ${{ inputs.target == 'production' && secrets.CONVEX_PROD_DEPLOY_KEY || secrets.CONVEX_DEPLOY_KEY }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify required secret
+        shell: bash
+        run: |
+          if [ -z "$CONVEX_DEPLOY_KEY" ]; then
+            echo "Missing deploy key secret for target '${{ inputs.target }}'."
+            exit 1
+          fi
+
+      - name: Set variable
+        shell: bash
+        run: |
+          if [ "${{ inputs.target }}" = "staging" ]; then
+            SET_CMD=(npx convex env default set --type preview --project petr-gottstein:terraquest)
+          elif [ "${{ inputs.target }}" = "production" ]; then
+            SET_CMD=(npx convex env set --prod)
+          else
+            SET_CMD=(npx convex env set)
+          fi
+          if [ "${{ inputs.force_overwrite }}" = "true" ]; then
+            SET_CMD+=(--force)
+          fi
+          printf '%s' "${{ inputs.value }}" | "${SET_CMD[@]}" "${{ inputs.name }}"
+          echo "${{ inputs.name }} set on the '${{ inputs.target }}' Convex deployment."
