@@ -1,11 +1,6 @@
 name: EAS Development Build
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - assets/images/icon.png
   workflow_dispatch:
 
 permissions:

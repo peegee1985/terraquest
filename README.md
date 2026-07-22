@@ -45,6 +45,8 @@ The manually triggered `EAS Development Build` workflow verifies `EXPO_TOKEN` an
 
 Expo project: [`@peegee85/terraquest`](https://expo.dev/accounts/peegee85/projects/terraquest), project ID `cbb276cd-c61e-4ab2-b19f-1198d03987da`.
 
+Latest installable Android development build: [EAS build `c62b1e95`](https://expo.dev/accounts/peegee85/projects/terraquest/builds/c62b1e95-9856-4b72-97b8-394f28c92859).
+
 ## Validation
 
 ```bash
