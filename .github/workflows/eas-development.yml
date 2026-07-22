@@ -1,0 +1,51 @@
+name: EAS Development Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-development:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify Expo authentication
+        run: npx eas-cli@latest whoami
+
+      - name: Create or link EAS project
+        run: npx eas-cli@latest project:init --force --non-interactive
+
+      - name: Configure development Convex URL
+        run: >-
+          npx eas-cli@latest env:create development
+          --name EXPO_PUBLIC_CONVEX_URL
+          --value https://tough-shepherd-707.convex.cloud
+          --visibility plaintext
+          --scope project
+          --force
+          --non-interactive
+
+      - name: Start Android development build
+        run: >-
+          npx eas-cli@latest build
+          --platform android
+          --profile development
+          --message "TerraQuest development checkpoint"
+          --non-interactive
+          --no-wait
