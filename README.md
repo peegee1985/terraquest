@@ -41,6 +41,28 @@ Backend changes under `convex/**` are deployed by the read-only GitHub Actions w
 
 Set `EXPO_PUBLIC_CONVEX_URL` separately in each matching EAS environment. The value is public client configuration; Convex deployment keys remain only in protected CI secrets.
 
+Two manually triggered workflows keep the hosted backends and EAS environments aligned:
+
+- `Deploy Convex Staging` deploys to a separate non-expiring Convex production-type deployment referenced as `staging`, then writes its URL to the EAS `preview` environment.
+- `Deploy Convex Production` deploys with the production key, then writes its URL to the EAS `production` environment. The workflow requires an explicit production confirmation and uses the GitHub `production` environment.
+
+Configure these repository secrets before the first run:
+
+- `CONVEX_STAGING_DEPLOY_KEY`: a deploy key scoped only to the `staging` deployment
+- `CONVEX_PROD_DEPLOY_KEY`: a Convex Production deploy key
+- `EXPO_TOKEN`: the Expo access token already used by the development build workflow
+
+Never commit deploy keys or Expo tokens. The generated Convex deployment URLs are public client configuration and can be shown in workflow output.
+
+Create the stable staging deployment once with Convex CLI 1.34 or newer, then generate its scoped CI key:
+
+```bash
+npx convex deployment create staging --type prod --expiration none
+npx convex deployment token create github-staging --deployment staging
+```
+
+Store the printed token directly as `CONVEX_STAGING_DEPLOY_KEY`; do not paste it into chat or a tracked file. A temporary Convex preview deployment is intentionally not used for staging because preview deployments expire automatically.
+
 The manually triggered `EAS Development Build` workflow verifies `EXPO_TOKEN` and the Expo project link, configures the development Convex URL, and queues an internally distributed Android development build. The workflow has read-only repository permissions.
 
 Expo project: [`@peegee85/terraquest`](https://expo.dev/accounts/peegee85/projects/terraquest), project ID `cbb276cd-c61e-4ab2-b19f-1198d03987da`.

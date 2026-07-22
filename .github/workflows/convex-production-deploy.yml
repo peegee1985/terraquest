@@ -1,0 +1,71 @@
+name: Deploy Convex Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_production:
+        description: Confirm deployment to the production Convex backend
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-production:
+    if: ${{ inputs.confirm_production }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_PROD_DEPLOY_KEY }}
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify required secrets
+        shell: bash
+        run: |
+          if [ -z "$CONVEX_DEPLOY_KEY" ]; then
+            echo "Missing GitHub Actions secret: CONVEX_PROD_DEPLOY_KEY"
+            exit 1
+          fi
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "Missing GitHub Actions secret: EXPO_TOKEN"
+            exit 1
+          fi
+
+      - name: Deploy production backend
+        run: >-
+          npx convex deploy
+          --typecheck enable
+          --message "TerraQuest production deployment from GitHub Actions"
+          --cmd 'echo "PRODUCTION_CONVEX_URL=$CONVEX_DEPLOY_URL" >> "$GITHUB_ENV"'
+          --cmd-url-env-var-name CONVEX_DEPLOY_URL
+
+      - name: Verify Expo authentication
+        run: npx eas-cli@21.0.2 whoami
+
+      - name: Configure EAS production environment
+        run: >-
+          npx eas-cli@21.0.2 env:create production
+          --name EXPO_PUBLIC_CONVEX_URL
+          --value "$PRODUCTION_CONVEX_URL"
+          --visibility plaintext
+          --scope project
+          --force
+          --non-interactive
+
+      - name: Verify EAS production environment
+        run: npx eas-cli@21.0.2 env:list production --scope project --format short

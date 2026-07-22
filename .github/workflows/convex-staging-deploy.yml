@@ -1,0 +1,63 @@
+name: Deploy Convex Staging
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-staging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_STAGING_DEPLOY_KEY }}
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify required secrets
+        shell: bash
+        run: |
+          if [ -z "$CONVEX_DEPLOY_KEY" ]; then
+            echo "Missing GitHub Actions secret: CONVEX_STAGING_DEPLOY_KEY"
+            exit 1
+          fi
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "Missing GitHub Actions secret: EXPO_TOKEN"
+            exit 1
+          fi
+
+      - name: Deploy staging backend
+        run: >-
+          npx convex deploy
+          --typecheck enable
+          --message "TerraQuest staging deployment from GitHub Actions"
+          --cmd 'echo "STAGING_CONVEX_URL=$CONVEX_DEPLOY_URL" >> "$GITHUB_ENV"'
+          --cmd-url-env-var-name CONVEX_DEPLOY_URL
+
+      - name: Verify Expo authentication
+        run: npx eas-cli@21.0.2 whoami
+
+      - name: Configure EAS preview environment
+        run: >-
+          npx eas-cli@21.0.2 env:create preview
+          --name EXPO_PUBLIC_CONVEX_URL
+          --value "$STAGING_CONVEX_URL"
+          --visibility plaintext
+          --scope project
+          --force
+          --non-interactive
+
+      - name: Verify EAS preview environment
+        run: npx eas-cli@21.0.2 env:list preview --scope project --format short
