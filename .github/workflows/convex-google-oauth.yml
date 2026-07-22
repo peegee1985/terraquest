@@ -1,0 +1,77 @@
+name: Set Convex Google OAuth Credentials
+
+# TQ-18 follow-up: pushes the Google OAuth client id/secret onto a Convex
+# deployment so the "google" provider in convex/auth.ts actually works.
+# Reads AUTH_GOOGLE_ID / AUTH_GOOGLE_SECRET from GitHub repository secrets
+# (add them under Settings > Secrets and variables > Actions) — the values
+# never appear in workflow inputs or logs, only piped straight to the
+# `convex env set` CLI via stdin.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Which Convex deployment to set AUTH_GOOGLE_ID/AUTH_GOOGLE_SECRET on
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - production
+      force_overwrite:
+        description: Overwrite existing values if already set
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  set-google-oauth:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.target == 'production' && 'production' || '' }}
+    env:
+      CONVEX_DEPLOY_KEY: ${{ inputs.target == 'dev' && secrets.CONVEX_DEPLOY_KEY || inputs.target == 'staging' && secrets.CONVEX_STAGING_DEPLOY_KEY || secrets.CONVEX_PROD_DEPLOY_KEY }}
+      AUTH_GOOGLE_ID: ${{ secrets.AUTH_GOOGLE_ID }}
+      AUTH_GOOGLE_SECRET: ${{ secrets.AUTH_GOOGLE_SECRET }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify required secrets
+        shell: bash
+        run: |
+          if [ -z "$CONVEX_DEPLOY_KEY" ]; then
+            echo "Missing deploy key secret for target '${{ inputs.target }}'."
+            echo "Expected one of: CONVEX_DEPLOY_KEY, CONVEX_STAGING_DEPLOY_KEY, CONVEX_PROD_DEPLOY_KEY."
+            exit 1
+          fi
+          if [ -z "$AUTH_GOOGLE_ID" ] || [ -z "$AUTH_GOOGLE_SECRET" ]; then
+            echo "Missing AUTH_GOOGLE_ID and/or AUTH_GOOGLE_SECRET repository secrets."
+            echo "Add them under Settings > Secrets and variables > Actions, then re-run."
+            exit 1
+          fi
+
+      - name: Set Google OAuth credentials on Convex
+        shell: bash
+        run: |
+          case "${{ inputs.target }}" in
+            production) EXTRA_ARGS="--prod" ;;
+            staging) EXTRA_ARGS="--deployment staging" ;;
+            *) EXTRA_ARGS="" ;;
+          esac
+          FORCE_ARG="${{ inputs.force_overwrite && '--force' || '' }}"
+          printf '%s' "$AUTH_GOOGLE_ID" | npx convex env set AUTH_GOOGLE_ID $EXTRA_ARGS $FORCE_ARG
+          printf '%s' "$AUTH_GOOGLE_SECRET" | npx convex env set AUTH_GOOGLE_SECRET $EXTRA_ARGS $FORCE_ARG
+          echo "AUTH_GOOGLE_ID and AUTH_GOOGLE_SECRET set on the '${{ inputs.target }}' Convex deployment."
