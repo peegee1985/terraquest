@@ -29,9 +29,16 @@ function LeaderboardRow({ entry, isSelf }: { entry: LeaderboardEntry; isSelf: bo
     <View style={[styles.row, isSelf && styles.rowSelf]}>
       <Text style={[styles.rowRank, isSelf && styles.rowSelfText]}>#{entry.rank}</Text>
       <View style={styles.rowIdentity}>
-        <Text numberOfLines={1} style={[styles.rowHandle, isSelf && styles.rowSelfText]}>
-          {entry.displayName ?? entry.handle}
-        </Text>
+        <View style={styles.rowHandleRow}>
+          <Text numberOfLines={1} style={[styles.rowHandle, isSelf && styles.rowSelfText]}>
+            {entry.displayName ?? entry.handle}
+          </Text>
+          {entry.isVip ? (
+            <View style={styles.vipTag}>
+              <Text style={styles.vipTagText}>VIP</Text>
+            </View>
+          ) : null}
+        </View>
         <Text style={styles.rowSubHandle}>@{entry.handle}</Text>
       </View>
       <Text style={[styles.rowScore, isSelf && styles.rowSelfText]}>{entry.score.toLocaleString('cs-CZ')}</Text>
@@ -250,7 +257,10 @@ const styles = StyleSheet.create({
   rowSelf: { backgroundColor: colors.brandSoft },
   rowRank: { ...typography.label, color: colors.textSecondary, width: 34 },
   rowIdentity: { flex: 1 },
+  rowHandleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   rowHandle: { ...typography.h3, color: colors.textPrimary },
+  vipTag: { backgroundColor: '#F5C542', borderRadius: radii.pill, paddingHorizontal: 6, paddingVertical: 1 },
+  vipTagText: { ...typography.label, fontSize: 9, color: '#1A1400', fontWeight: '800', letterSpacing: 0.5 },
   rowSubHandle: { ...typography.caption, color: colors.textSecondary },
   rowScore: { ...typography.h3, color: colors.textPrimary, fontVariant: ['tabular-nums'] },
   rowSelfText: { color: colors.brand },

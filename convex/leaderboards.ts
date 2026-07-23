@@ -3,6 +3,7 @@ import { mutationGeneric as mutation, queryGeneric as query } from 'convex/serve
 import { v } from 'convex/values';
 
 import { rankEntries, type LeaderboardEntry } from './leaderboardRules';
+import { isVipActive } from './planRules';
 
 // TQ-45: written against mutationGeneric/queryGeneric from 'convex/server'
 // rather than the generated ./_generated/server — same environment
@@ -26,11 +27,18 @@ const leaderboardEntryValidator = v.object({
   handle: v.string(),
   displayName: v.optional(v.string()),
   avatarId: v.string(),
+  isVip: v.boolean(),
   score: v.number(),
   rank: v.number(),
 });
 
-type StatsRow = { userId: any; totalXp: number; explorationUnits: number };
+type StatsRow = {
+  userId: any;
+  totalXp: number;
+  explorationUnits: number;
+  plan?: 'free' | 'vip';
+  planExpiresAt?: number;
+};
 type UserRow = { handle: string; displayName?: string; avatarId: string; country?: string };
 
 function scoreFor(stats: StatsRow, metric: 'xp' | 'explorationUnits'): number {
@@ -41,7 +49,7 @@ async function buildEntry(
   ctx: any,
   stats: StatsRow,
   metric: 'xp' | 'explorationUnits',
-): Promise<LeaderboardEntry<{ userId: any; handle: string; displayName?: string; avatarId: string }> | null> {
+): Promise<LeaderboardEntry<{ userId: any; handle: string; displayName?: string; avatarId: string; isVip: boolean }> | null> {
   const user: UserRow | null = await ctx.db.get(stats.userId);
   if (!user) return null;
   return {
@@ -49,6 +57,7 @@ async function buildEntry(
     handle: user.handle,
     displayName: user.displayName,
     avatarId: user.avatarId,
+    isVip: isVipActive(stats.plan, stats.planExpiresAt, Date.now()),
     score: scoreFor(stats, metric),
   };
 }
@@ -86,12 +95,19 @@ export const listCountryLeaderboard = query({
       .order('desc')
       .take(COUNTRY_SCAN_LIMIT);
 
-    const entries: LeaderboardEntry<{ userId: any; handle: string; displayName?: string; avatarId: string }>[] = [];
+    const entries: LeaderboardEntry<{ userId: any; handle: string; displayName?: string; avatarId: string; isVip: boolean }>[] = [];
     for (const stats of statsRows) {
       if (entries.length >= limit) break;
       const user: UserRow | null = await ctx.db.get(stats.userId);
       if (!user || user.country !== args.country) continue;
-      entries.push({ userId: stats.userId, handle: user.handle, displayName: user.displayName, avatarId: user.avatarId, score: scoreFor(stats, metric) });
+      entries.push({
+        userId: stats.userId,
+        handle: user.handle,
+        displayName: user.displayName,
+        avatarId: user.avatarId,
+        isVip: isVipActive(stats.plan, stats.planExpiresAt, Date.now()),
+        score: scoreFor(stats, metric),
+      });
     }
     return rankEntries(entries);
   },
@@ -119,7 +135,7 @@ export const listFriendsLeaderboard = query({
       .collect();
     const userIds = [userId, ...follows.map((row: any) => row.followingId)];
 
-    const entries: LeaderboardEntry<{ userId: any; handle: string; displayName?: string; avatarId: string }>[] = [];
+    const entries: LeaderboardEntry<{ userId: any; handle: string; displayName?: string; avatarId: string; isVip: boolean }>[] = [];
     for (const otherId of userIds) {
       const stats: StatsRow | null = await ctx.db
         .query('userStats')

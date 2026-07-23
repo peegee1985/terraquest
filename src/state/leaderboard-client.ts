@@ -8,6 +8,7 @@ export type LeaderboardEntry = {
   handle: string;
   displayName?: string;
   avatarId: string;
+  isVip: boolean;
   score: number;
   rank: number;
 };
