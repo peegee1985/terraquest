@@ -214,7 +214,14 @@ export default defineSchema({
     safetyStatus: v.union(v.literal('safe'), v.literal('excluded')),
     visibility: v.union(v.literal('public'), v.literal('hidden')),
     updatedAt: v.number(),
-  }).index('by_source', ['sourceId']),
+  })
+    .index('by_source', ['sourceId'])
+    // TQ-29 client UI: listPoiInBounds scans this index (there's no
+    // meaningful geo-index available without a real spatial data type) and
+    // filters by lat/lng bounding box + isPubliclyDiscoverable in
+    // application code — same "live query suffices at this scale" call as
+    // the leaderboard's country scan (leaderboards.ts).
+    .index('by_visibility', ['visibility']),
 
   // TQ-29: existence of a (userId, poiId) row is the idempotency check —
   // "jeden POI dá první odměnu jen jednou" — dayKey lets the mutation

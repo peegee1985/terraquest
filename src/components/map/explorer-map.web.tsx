@@ -1,8 +1,10 @@
+import { useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
 import Svg, { Circle, G, Line, Path, Rect } from 'react-native-svg';
 
 import { buildFogGeometry, LatLng, ViewportBounds } from '@/domain/fog';
 import { TrackPoint } from '@/domain/types';
+import type { PoiMarker } from '@/state/poi-client';
 import { colors } from '@/theme/tokens';
 
 const VIEWBOX_WIDTH = 480;
@@ -52,7 +54,19 @@ function fogGeometryToPath(outerRing: LatLng[], holes: LatLng[][], bounds: Viewp
   return [ringToPath(outerRing, bounds), ...holes.map((hole) => ringToPath(hole, bounds))].join(' ');
 }
 
-export function ExplorerMap({ route, revealedCells }: { route: TrackPoint[]; revealedCells: readonly string[] }) {
+export function ExplorerMap({
+  route,
+  revealedCells,
+  pois = [],
+  onBoundsChange,
+  onMarkerPress,
+}: {
+  route: TrackPoint[];
+  revealedCells: readonly string[];
+  pois?: PoiMarker[];
+  onBoundsChange?: (bounds: ViewportBounds) => void;
+  onMarkerPress?: (poiId: string) => void;
+}) {
   const path = route.length
     ? route.map((_, index) => `${index === 0 ? 'M' : 'L'} ${120 + index * 58} ${330 - index * 42}`).join(' ')
     : 'M 120 330 L 178 288 L 236 246 L 294 204 L 352 162';
@@ -60,6 +74,19 @@ export function ExplorerMap({ route, revealedCells }: { route: TrackPoint[]; rev
   const bounds = boundsFromRoute(route);
   const geometry = buildFogGeometry(revealedCells, bounds);
   const fogPath = fogGeometryToPath(geometry.outerRing, geometry.holes, bounds);
+
+  // No real pan/zoom on this static SVG projection — bounds are derived
+  // straight from the route on every render, so this just reports whatever
+  // the route-derived bounds currently are (mirrors the native Leaflet
+  // bridge's postBounds(), which fires on actual map movement instead).
+  // Depending on the scalar fields (not the `bounds` object itself, which
+  // is a fresh object every render even when unchanged) is deliberate: the
+  // object identity would refire this every render and loop with the
+  // parent's setState.
+  useEffect(() => {
+    onBoundsChange?.(bounds);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bounds.minLatitude, bounds.maxLatitude, bounds.minLongitude, bounds.maxLongitude, onBoundsChange]);
 
   return (
     <View style={styles.container}>
@@ -72,6 +99,22 @@ export function ExplorerMap({ route, revealedCells }: { route: TrackPoint[]; rev
         <Path d={fogPath} fill={colors.fog} fillRule="evenodd" />
         <Path d={path} fill="none" stroke={colors.brand} strokeLinecap="round" strokeLinejoin="round" strokeWidth="7" />
         <Circle cx="352" cy="162" fill={colors.brand} r="10" stroke="#F5F7F4" strokeWidth="4" />
+        {pois.map((poi) => {
+          const { x, y } = project(poi, bounds);
+          const rare = poi.rarity === 'rare';
+          return (
+            <Circle
+              key={poi.poiId}
+              cx={x}
+              cy={y}
+              fill={rare ? '#F5C542' : colors.brand}
+              onPress={() => onMarkerPress?.(poi.poiId)}
+              r={rare ? 10 : 7}
+              stroke="#F5F7F4"
+              strokeWidth="2"
+            />
+          );
+        })}
       </Svg>
     </View>
   );

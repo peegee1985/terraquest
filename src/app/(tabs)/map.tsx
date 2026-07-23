@@ -1,14 +1,41 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
+import { useCallback, useState } from 'react';
 import { Alert, SafeAreaView, StyleSheet, Text, View } from 'react-native';
 
 import { ExplorerMap } from '../../components/map/explorer-map';
+import { PoiLayer, type PoiLayerState } from '../../components/map/poi-layer';
 
 import { PrimaryButton } from '@/components/ui/primitives';
+import type { ViewportBounds } from '@/domain/fog';
 import { useLocationPermissions } from '@/hooks/use-location-permissions';
+import { convex } from '@/state/convex-client';
 import { useExplorer } from '@/state/explorer-context';
+import type { PoiMarker } from '@/state/poi-client';
 import { colors, radii, spacing, typography } from '@/theme/tokens';
+
+function formatPoiFeedback(poi: PoiMarker, result: { discovered: boolean; awarded: number; reason?: string }): string | null {
+  if (result.discovered && result.awarded > 0) return `${poi.name}: objeveno! +${result.awarded} XP`;
+  if (result.reason === 'already_discovered') return null;
+  if (result.reason === 'too_far') return `${poi.name}: musíš být blíž (dosah ${poi.discoveryRadiusMeters} m).`;
+  if (result.reason === 'daily_cap_reached') return `${poi.name}: objeveno, ale dnešní limit XP za běžné body je vyčerpán.`;
+  if (result.reason === 'ineligible' || result.reason === 'not_found') return `${poi.name}: tento bod momentálně nelze objevit.`;
+  return null;
+}
+
+// A placeholder viewport (central Prague, matching ExplorerMap's own
+// INITIAL_CENTER) used only until the map reports its real bounds — the
+// PoiLayer branch below is gated on `convex` alone (stable for the app's
+// lifetime), not on whether bounds have arrived yet, specifically so this
+// default never causes a branch swap (and therefore a full ExplorerMap/
+// WebView remount) once the real bounds do land.
+const DEFAULT_MAP_BOUNDS: ViewportBounds = {
+  minLatitude: 50.0793,
+  maxLatitude: 50.0993,
+  minLongitude: 14.4126,
+  maxLongitude: 14.4326,
+};
 
 function formatDuration(seconds: number) {
   const minutes = Math.floor(seconds / 60).toString().padStart(2, '0');
@@ -20,6 +47,29 @@ export default function MapScreen() {
   const router = useRouter();
   const { session, revealedCells, startSession, togglePause, finishSession } = useExplorer();
   const { isForegroundDenied, requestForeground } = useLocationPermissions();
+  // Reported by ExplorerMap (Leaflet's moveend on native, route-derived on
+  // web) — feeds the POI query's bounding box. Starts at a placeholder
+  // (see DEFAULT_MAP_BOUNDS) until the map's first real report lands.
+  const [mapBounds, setMapBounds] = useState<ViewportBounds>(DEFAULT_MAP_BOUNDS);
+
+  const handleMarkerPress = useCallback(
+    async (poiId: string, pois: PoiMarker[], discover: PoiLayerState['discover']) => {
+      const poi = pois.find((candidate) => candidate.poiId === poiId);
+      const current = session.route.at(-1);
+      if (!poi) return;
+      if (!session.active || !current) {
+        Alert.alert('Objevování bodů', 'Nejprve zahaj průzkum, ať máme tvou aktuální polohu.');
+        return;
+      }
+      const result = await discover(poi, current).catch(() => ({ discovered: false, awarded: 0, reason: 'error' }));
+      if (result.discovered && result.awarded > 0) {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+      }
+      const message = formatPoiFeedback(poi, result);
+      if (message) Alert.alert('Bod zájmu', message);
+    },
+    [session.active, session.route],
+  );
 
   // TQ-21: location capture itself runs in a background task
   // (src/domain/tracking-task.ts), started/stopped by explorer-context —
@@ -52,7 +102,21 @@ export default function MapScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
-        <ExplorerMap revealedCells={revealedCells} route={session.route} />
+        {convex ? (
+          <PoiLayer bounds={mapBounds}>
+            {({ pois, discover }) => (
+              <ExplorerMap
+                onBoundsChange={setMapBounds}
+                onMarkerPress={(poiId) => void handleMarkerPress(poiId, pois, discover)}
+                pois={pois}
+                revealedCells={revealedCells}
+                route={session.route}
+              />
+            )}
+          </PoiLayer>
+        ) : (
+          <ExplorerMap onBoundsChange={setMapBounds} revealedCells={revealedCells} route={session.route} />
+        )}
 
         <View style={styles.topHud}>
           <View style={styles.brandBlock}>

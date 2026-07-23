@@ -4,6 +4,7 @@ import RNWebView, { type WebViewMessageEvent, type WebViewProps } from 'react-na
 
 import { buildFogGeometry, LatLng, ViewportBounds } from '@/domain/fog';
 import { TrackPoint } from '@/domain/types';
+import type { PoiMarker } from '@/state/poi-client';
 import { colors } from '@/theme/tokens';
 
 // react-native-webview types WebView as `class WebView<P = undefined>`, which
@@ -22,6 +23,7 @@ type MapPayload = {
   route: [number, number][];
   current: { lat: number; lng: number } | null;
   fog: { outerRing: [number, number][]; holes: [number, number][][] };
+  pois: { poiId: string; lat: number; lng: number; rarity: PoiMarker['rarity'] }[];
 };
 
 const DEFAULT_BOUNDS: ViewportBounds = {
@@ -31,7 +33,19 @@ const DEFAULT_BOUNDS: ViewportBounds = {
   maxLongitude: INITIAL_CENTER[1] + 0.01,
 };
 
-export function ExplorerMap({ route, revealedCells }: { route: TrackPoint[]; revealedCells: readonly string[] }) {
+export function ExplorerMap({
+  route,
+  revealedCells,
+  pois = [],
+  onBoundsChange,
+  onMarkerPress,
+}: {
+  route: TrackPoint[];
+  revealedCells: readonly string[];
+  pois?: PoiMarker[];
+  onBoundsChange?: (bounds: ViewportBounds) => void;
+  onMarkerPress?: (poiId: string) => void;
+}) {
   const webviewRef = useRef<RNWebView>(null);
   const [ready, setReady] = useState(false);
   // Reported by the Leaflet page on 'moveend', used to cull the persisted
@@ -48,8 +62,9 @@ export function ExplorerMap({ route, revealedCells }: { route: TrackPoint[]; rev
       route: routePairs,
       current: currentPayload,
       fog: { outerRing: ringToPairs(geometry.outerRing), holes: geometry.holes.map(ringToPairs) },
+      pois: pois.map((poi) => ({ poiId: poi.poiId, lat: poi.latitude, lng: poi.longitude, rarity: poi.rarity })),
     };
-  }, [route, revealedCells, bounds]);
+  }, [route, revealedCells, bounds, pois]);
 
   useEffect(() => {
     if (!ready) return;
@@ -60,16 +75,20 @@ export function ExplorerMap({ route, revealedCells }: { route: TrackPoint[]; rev
     try {
       const message = JSON.parse(event.nativeEvent.data) as
         | { type: 'ready' }
-        | { type: 'bounds'; minLatitude: number; maxLatitude: number; minLongitude: number; maxLongitude: number };
+        | { type: 'bounds'; minLatitude: number; maxLatitude: number; minLongitude: number; maxLongitude: number }
+        | { type: 'poi-tap'; poiId: string };
       if (message.type === 'ready') setReady(true);
       if (message.type === 'bounds') {
-        setBounds({
+        const next: ViewportBounds = {
           minLatitude: message.minLatitude,
           maxLatitude: message.maxLatitude,
           minLongitude: message.minLongitude,
           maxLongitude: message.maxLongitude,
-        });
+        };
+        setBounds(next);
+        onBoundsChange?.(next);
       }
+      if (message.type === 'poi-tap') onMarkerPress?.(message.poiId);
     } catch {
       // Ignore anything that doesn't match the Leaflet bridge contract.
     }
@@ -130,6 +149,7 @@ const leafletHtml = `<!doctype html>
       var routeLayer = null;
       var currentMarker = null;
       var accuracyCircle = null;
+      var poiMarkers = {};
 
       function postBounds() {
         var bounds = map.getBounds();
@@ -163,6 +183,29 @@ const leafletHtml = `<!doctype html>
             radius: 8, color: '#F5F7F4', weight: 2, fillColor: '${colors.brand}', fillOpacity: 1, interactive: false,
           }).addTo(map);
         }
+
+        var nextPoiIds = {};
+        (data.pois || []).forEach(function (poi) {
+          nextPoiIds[poi.poiId] = true;
+          if (poiMarkers[poi.poiId]) return;
+          var rare = poi.rarity === 'rare';
+          var marker = L.circleMarker([poi.lat, poi.lng], {
+            radius: rare ? 10 : 7,
+            color: rare ? '#F5C542' : '#F5F7F4',
+            weight: 2,
+            fillColor: rare ? '#F5C542' : '${colors.brand}',
+            fillOpacity: 0.85,
+          }).addTo(map);
+          marker.on('click', function () {
+            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'poi-tap', poiId: poi.poiId }));
+          });
+          poiMarkers[poi.poiId] = marker;
+        });
+        Object.keys(poiMarkers).forEach(function (poiId) {
+          if (nextPoiIds[poiId]) return;
+          map.removeLayer(poiMarkers[poiId]);
+          delete poiMarkers[poiId];
+        });
       };
 
       window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ready' }));

@@ -1,4 +1,5 @@
-import { mutationGeneric as mutation } from 'convex/server';
+import { getAuthUserId } from '@convex-dev/auth/server';
+import { mutationGeneric as mutation, queryGeneric as query } from 'convex/server';
 import { v } from 'convex/values';
 
 import { checkAndGrantAchievements } from './achievements';
@@ -90,6 +91,72 @@ export const upsertPoiBatch = mutation({
   },
 });
 
+const poiMarkerValidator = v.object({
+  poiId: v.id('poi'),
+  name: v.string(),
+  category: categoryValidator,
+  rarity: v.union(v.literal('common'), v.literal('rare')),
+  latitude: v.number(),
+  longitude: v.number(),
+  discoveryRadiusMeters: v.number(),
+});
+
+// How many public POI rows the by_visibility index is scanned for before
+// filtering down to the requested bounding box — same "live query suffices
+// at this scale" call as leaderboards.ts's COUNTRY_SCAN_LIMIT; there's no
+// real geo-index available here (poi.latitude/longitude aren't indexed as
+// a spatial type), so the bbox filter runs in application code over this
+// scan window rather than as a proper range query.
+const BOUNDS_SCAN_LIMIT = 500;
+const MAX_MARKERS = 200;
+
+/**
+ * TQ-29 client UI: the first read path for the map — returns publicly
+ * discoverable POI within a lat/lng bounding box (the same shape the
+ * Leaflet bridge already reports via postBounds()). Never exposes
+ * safetyStatus/sourceId/updatedAt to the client — only the fields a map
+ * marker + discover-tap actually need.
+ */
+export const listPoiInBounds = query({
+  args: {
+    minLatitude: v.number(),
+    maxLatitude: v.number(),
+    minLongitude: v.number(),
+    maxLongitude: v.number(),
+  },
+  returns: v.array(poiMarkerValidator),
+  handler: async (ctx: any, args: any) => {
+    const rows = await ctx.db
+      .query('poi')
+      .withIndex('by_visibility', (q: any) => q.eq('visibility', 'public'))
+      .take(BOUNDS_SCAN_LIMIT);
+
+    const markers = [];
+    for (const poi of rows) {
+      if (markers.length >= MAX_MARKERS) break;
+      if (!isPubliclyDiscoverable(poi)) continue;
+      if (
+        poi.latitude < args.minLatitude ||
+        poi.latitude > args.maxLatitude ||
+        poi.longitude < args.minLongitude ||
+        poi.longitude > args.maxLongitude
+      ) {
+        continue;
+      }
+      markers.push({
+        poiId: poi._id,
+        name: poi.name,
+        category: poi.category,
+        rarity: poi.rarity,
+        latitude: poi.latitude,
+        longitude: poi.longitude,
+        discoveryRadiusMeters: poi.discoveryRadiusMeters,
+      });
+    }
+    return markers;
+  },
+});
+
 /**
  * TQ-29: verifies a first-visit POI discovery entirely server-side.
  *
@@ -102,10 +169,15 @@ export const upsertPoiBatch = mutation({
  * - "Jeden POI dá první odměnu jen jednou": existence of a (userId, poiId)
  *   row in poiDiscoveries is the idempotency check — a repeat call for an
  *   already-discovered POI is a no-op, same pattern as userLevelClaims.
+ *
+ * userId comes from getAuthUserId(ctx), not a client-supplied argument —
+ * this became the first real client caller of this mutation (the map's
+ * discover-tap interaction), so it needed the same identity guarantee
+ * submitTrackingSession already has (sessions.ts): no caller can claim a
+ * discovery "as" another user by passing an arbitrary id.
  */
 export const discoverPoi = mutation({
   args: {
-    userId: v.id('users'),
     poiId: v.id('poi'),
     latitude: v.number(),
     longitude: v.number(),
@@ -113,6 +185,9 @@ export const discoverPoi = mutation({
   },
   returns: v.object({ discovered: v.boolean(), awarded: v.number(), reason: v.optional(v.string()) }),
   handler: async (ctx: any, args: any) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error('discoverPoi: not authenticated');
+
     const poi = await ctx.db.get(args.poiId);
     if (!poi) return { discovered: false, awarded: 0, reason: 'not_found' };
     if (!isPubliclyDiscoverable(poi)) return { discovered: false, awarded: 0, reason: 'ineligible' };
@@ -122,24 +197,24 @@ export const discoverPoi = mutation({
 
     const existing = await ctx.db
       .query('poiDiscoveries')
-      .withIndex('by_user_poi', (q: any) => q.eq('userId', args.userId).eq('poiId', args.poiId))
+      .withIndex('by_user_poi', (q: any) => q.eq('userId', userId).eq('poiId', args.poiId))
       .unique();
     if (existing) return { discovered: false, awarded: 0, reason: 'already_discovered' };
 
-    const user = await ctx.db.get(args.userId);
+    const user = await ctx.db.get(userId);
     if (!user) throw new Error('discoverPoi: user not found');
     const dayKey = gameDayKey(args.occurredAt, user.timezone);
 
     const todayDiscoveries = await ctx.db
       .query('poiDiscoveries')
-      .withIndex('by_user_day', (q: any) => q.eq('userId', args.userId).eq('dayKey', dayKey))
+      .withIndex('by_user_day', (q: any) => q.eq('userId', userId).eq('dayKey', dayKey))
       .collect();
     // Only common-rarity discoveries count against the 10/day cap (docs
     // 03); rare/area POI have no fixed count cap ("dle definice").
     const commonDiscoveriesToday = todayDiscoveries.filter((row: any) => row.poiRarity === 'common').length;
 
     await ctx.db.insert('poiDiscoveries', {
-      userId: args.userId,
+      userId,
       poiId: args.poiId,
       poiRarity: poi.rarity,
       dayKey,
@@ -149,8 +224,8 @@ export const discoverPoi = mutation({
     // TQ-30: counts every discovery toward the lifetime total (used by the
     // "Průzkum" achievement tier), independent of whether this particular
     // discovery still earns XP under the daily cap below.
-    await bumpUserStatsCounter(ctx, args.userId, 'poiDiscoveriesCount', 1, args.occurredAt);
-    await checkAndGrantAchievements(ctx, { userId: args.userId, occurredAt: args.occurredAt });
+    await bumpUserStatsCounter(ctx, userId, 'poiDiscoveriesCount', 1, args.occurredAt);
+    await checkAndGrantAchievements(ctx, { userId, occurredAt: args.occurredAt });
 
     if (hasReachedCommonDailyCap(poi.rarity, commonDiscoveriesToday)) {
       // Discovery itself is still recorded (personal map/history value),
@@ -159,7 +234,7 @@ export const discoverPoi = mutation({
     }
 
     const result = await awardXp(ctx, {
-      userId: args.userId,
+      userId,
       eventId: `poi-discovery:${args.poiId}`,
       sourceType: 'poi',
       sourceId: String(args.poiId),
