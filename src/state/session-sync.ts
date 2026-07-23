@@ -1,5 +1,10 @@
-import { anyApi } from 'convex/server';
 import type { ConvexReactClient } from 'convex/react';
+// TYPE-ONLY import — erased entirely at compile time (`import type` never
+// emits runtime JS), so this can't pull convex/server's backend-runtime
+// machinery into the client bundle the way a value import would. See
+// clientFunctionReference below for why a value import of that module
+// caused an instant startup crash.
+import type { FunctionReference } from 'convex/server';
 
 import { computeRetryDelayMs, DEFAULT_SYNC_RETRY_OPTIONS, hasExceededRetryBudget, type SyncRetryOptions } from '../domain/sync';
 import type { OutboxRepository } from '../data/local/repositories/outbox';
@@ -47,17 +52,53 @@ export const NOT_YET_CONFIGURED_TRANSPORT: SyncTransport = async () => ({
 });
 
 /**
+ * TQ-31 (fixed post-build-crash): builds the exact same runtime shape as
+ * `convex/server`'s `makeFunctionReference` — `{ [Symbol.for
+ * ('functionName')]: name }` — WITHOUT importing `convex/server` as a
+ * value. That module is meant for the Convex *backend* runtime (its barrel
+ * index pulls in schema/cron/storage/router machinery), not for bundling
+ * into a mobile client; importing it here (`import { anyApi } from
+ * 'convex/server'`) caused an instant crash on app startup, since this file
+ * loads unconditionally from the root layout before anything renders.
+ * `Symbol.for` reads from the global symbol registry, so any code anywhere
+ * that calls `Symbol.for('functionName')` gets the identical symbol
+ * Convex's client SDK looks for — functionally identical to
+ * `makeFunctionReference(name)`, minus the dangerous import. The `FunctionReference`
+ * type itself is imported with `import type` above, which is erased at
+ * compile time and carries no runtime cost.
+ */
+function clientFunctionReference<F extends FunctionReference<'mutation'>>(name: string): F {
+  return { [Symbol.for('functionName')]: name } as unknown as F;
+}
+
+type SubmitTrackingSessionMutation = FunctionReference<
+  'mutation',
+  'public',
+  {
+    localSessionId: string;
+    startedAt: number | null;
+    endedAt: number;
+    movementMode: MovementMode;
+    elapsedSeconds: number;
+    distanceMeters: number;
+    newExplorationUnitsCount: number;
+  },
+  { distanceAwarded: number; explorationAwarded: number; totalConfirmedXp: number; levelUps: { level: number; rankId: string }[] }
+>;
+
+/**
  * TQ-31: the real transport, calling convex/sessions.ts's
- * submitTrackingSession. Uses `anyApi` (an untyped FunctionReference
- * builder from convex/server) rather than a generated `api` object, since
- * this environment still can't run `npx convex dev`'s codegen — the exact
- * same class of workaround as the server-side `makeFunctionReference` calls
- * from TQ-18/26/29b, just on the client side for the first time.
+ * submitTrackingSession. Uses a locally-built function reference (see
+ * clientFunctionReference above) rather than a generated `api` object,
+ * since this environment still can't run `npx convex dev`'s codegen — the
+ * exact same class of workaround as the server-side `makeFunctionReference`
+ * calls from TQ-18/26/29b, just on the client side.
  */
 export function convexSessionSyncTransport(client: ConvexReactClient): SyncTransport {
+  const submitTrackingSessionRef = clientFunctionReference<SubmitTrackingSessionMutation>('sessions:submitTrackingSession');
   return async (payload) => {
     try {
-      const result = await client.mutation(anyApi.sessions.submitTrackingSession, {
+      const result = await client.mutation(submitTrackingSessionRef, {
         localSessionId: payload.sessionId,
         startedAt: payload.startedAt,
         endedAt: payload.endedAt,
