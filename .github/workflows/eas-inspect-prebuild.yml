@@ -41,7 +41,6 @@ jobs:
           --profile preview
           --output /tmp/eas-prebuild-output
           --force
-          --non-interactive
 
       - name: Locate and print the expo-location source referenced by the generated Gradle project
         run: |

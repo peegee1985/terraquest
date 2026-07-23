@@ -1,59 +1,128 @@
 diff --git a/node_modules/expo-location/android/src/main/java/expo/modules/location/taskConsumers/LocationTaskConsumer.kt b/node_modules/expo-location/android/src/main/java/expo/modules/location/taskConsumers/LocationTaskConsumer.kt
-index b4f6c06..582382b 100644
+index b4f6c06..f94195a 100644
 --- a/node_modules/expo-location/android/src/main/java/expo/modules/location/taskConsumers/LocationTaskConsumer.kt
 +++ b/node_modules/expo-location/android/src/main/java/expo/modules/location/taskConsumers/LocationTaskConsumer.kt
-@@ -211,15 +211,37 @@ class LocationTaskConsumer(context: Context, taskManagerUtils: TaskManagerUtilsI
-       extras.putString("taskName", task.name)
-       extras.putBoolean("killService", serviceOptions.getBoolean("killServiceOnDestroy", false))
-       serviceIntent.putExtras(extras)
--      context.startForegroundService(serviceIntent)
-+      // TerraQuest patch: Android 12+/14 can refuse to start a foreground
-+      // service (SecurityException / ForegroundServiceStartNotAllowedException)
-+      // even when AppForegroundedSingleton.isForegrounded is true above —
-+      // that flag only reflects this app's own Activity lifecycle, not every
-+      // OS-side restriction on foreground service starts. This call, and
-+      // startForeground() in onServiceConnected below, were previously
-+      // unguarded; onServiceConnected in particular runs as an Android
-+      // system callback with no JS/try-catch anywhere in its call stack, so
-+      // an exception there crashed the whole process with nothing catchable
-+      // from React Native. Wrapping both in try/catch keeps plain location
-+      // delivery (still requested via requestLocationUpdates/PendingIntent
-+      // in startLocationUpdates() above) working even when the OS denies
-+      // foreground elevation, instead of taking the whole app down.
-+      try {
-+        context.startForegroundService(serviceIntent)
-+      } catch (e: Exception) {
-+        Log.e(TAG, "Failed to start foreground service, continuing without it.", e)
+@@ -186,53 +186,80 @@ class LocationTaskConsumer(context: Context, taskManagerUtils: TaskManagerUtilsI
+       Log.w(TAG, "Location task is null")
+       return
+     }
+-    val options: ReadableArguments = MapArguments(task.options)
+-    val useForegroundService = shouldUseForegroundService(task.options)
++    // TerraQuest patch: everything below touches Android's foreground-service
++    // APIs, which can throw for reasons entirely outside this app's control —
++    // SecurityException/ForegroundServiceStartNotAllowedException under
++    // Android 12+/14's background-start restrictions, even when
++    // AppForegroundedSingleton.isForegrounded is true above (that flag only
++    // reflects this app's own Activity lifecycle, not every OS-side
++    // restriction). This whole block — including bindService() itself and
++    // the Intent/Bundle construction, not just the two calls previously
++    // wrapped — is now guarded, in case something other than the two
++    // originally-suspected calls is what's actually throwing. onServiceConnected
++    // below still needs its OWN separate inner try/catch: it runs later as
++    // an Android system callback with no relation to this function's call
++    // stack (bindService() returns immediately), so this outer try/catch
++    // cannot protect code that runs after this function has already
++    // returned. An exception in either place previously crashed the whole
++    // process with nothing catchable from React Native. Falling back to
++    // plain (non-foreground) location delivery — still requested via
++    // requestLocationUpdates/PendingIntent in startLocationUpdates() above —
++    // beats taking the whole app down.
++    try {
++      val options: ReadableArguments = MapArguments(task.options)
++      val useForegroundService = shouldUseForegroundService(task.options)
+ 
+-    // Service is already running, but the task has been registered again without `foregroundService` option.
+-    if (mService != null && !useForegroundService) {
+-      stopForegroundService()
+-      return
+-    }
++      // Service is already running, but the task has been registered again without `foregroundService` option.
++      if (mService != null && !useForegroundService) {
++        stopForegroundService()
 +        return
 +      }
-       context.bindService(
-         serviceIntent,
-         object : ServiceConnection {
-           override fun onServiceConnected(name: ComponentName, service: IBinder) {
-             mService = (service as? ServiceBinder)?.service
+ 
+-    // Service is not running and the user don't want to start foreground service.
+-    if (!useForegroundService) {
+-      return
+-    }
++      // Service is not running and the user don't want to start foreground service.
++      if (!useForegroundService) {
++        return
++      }
+ 
+-    // Foreground service is requested but not running.
+-    if (mService == null) {
+-      val serviceIntent = Intent(context, LocationTaskService::class.java)
+-      val extras = Bundle()
+-      val serviceOptions = options.getArguments(FOREGROUND_SERVICE_KEY).toBundle()
+-
+-      // extras param name is appId for legacy reasons
+-      extras.putString("appId", task.appScopeKey)
+-      extras.putString("taskName", task.name)
+-      extras.putBoolean("killService", serviceOptions.getBoolean("killServiceOnDestroy", false))
+-      serviceIntent.putExtras(extras)
+-      context.startForegroundService(serviceIntent)
+-      context.bindService(
+-        serviceIntent,
+-        object : ServiceConnection {
+-          override fun onServiceConnected(name: ComponentName, service: IBinder) {
+-            mService = (service as? ServiceBinder)?.service
 -            mService?.let {
 -              it.setParentContext(context)
 -              it.startForeground(serviceOptions)
-+            try {
-+              mService?.let {
-+                it.setParentContext(context)
-+                it.startForeground(serviceOptions)
++      // Foreground service is requested but not running.
++      if (mService == null) {
++        val serviceIntent = Intent(context, LocationTaskService::class.java)
++        val extras = Bundle()
++        val serviceOptions = options.getArguments(FOREGROUND_SERVICE_KEY).toBundle()
++
++        // extras param name is appId for legacy reasons
++        extras.putString("appId", task.appScopeKey)
++        extras.putString("taskName", task.name)
++        extras.putBoolean("killService", serviceOptions.getBoolean("killServiceOnDestroy", false))
++        serviceIntent.putExtras(extras)
++        context.startForegroundService(serviceIntent)
++        context.bindService(
++          serviceIntent,
++          object : ServiceConnection {
++            override fun onServiceConnected(name: ComponentName, service: IBinder) {
++              mService = (service as? ServiceBinder)?.service
++              try {
++                mService?.let {
++                  it.setParentContext(context)
++                  it.startForeground(serviceOptions)
++                }
++              } catch (e: Exception) {
++                Log.e(TAG, "Failed to promote to foreground, continuing without it.", e)
 +              }
-+            } catch (e: Exception) {
-+              Log.e(TAG, "Failed to promote to foreground, continuing without it.", e)
              }
-           }
- 
-@@ -232,7 +254,11 @@ class LocationTaskConsumer(context: Context, taskManagerUtils: TaskManagerUtilsI
-       )
-     } else {
-       // Restart the service with new service options.
+-          }
+-
+-          override fun onServiceDisconnected(name: ComponentName) {
+-            mService?.stop()
+-            mService = null
+-          }
+-        },
+-        Context.BIND_AUTO_CREATE
+-      )
+-    } else {
+-      // Restart the service with new service options.
 -      mService?.startForeground(options.getArguments(FOREGROUND_SERVICE_KEY).toBundle())
-+      try {
++
++            override fun onServiceDisconnected(name: ComponentName) {
++              mService?.stop()
++              mService = null
++            }
++          },
++          Context.BIND_AUTO_CREATE
++        )
++      } else {
++        // Restart the service with new service options.
 +        mService?.startForeground(options.getArguments(FOREGROUND_SERVICE_KEY).toBundle())
-+      } catch (e: Exception) {
-+        Log.e(TAG, "Failed to restart foreground service, continuing without it.", e)
 +      }
++    } catch (e: Exception) {
++      Log.e(TAG, "Failed to start/restart foreground service, continuing without it.", e)
      }
    }
  
