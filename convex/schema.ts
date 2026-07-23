@@ -105,10 +105,17 @@ export default defineSchema({
     plan: v.optional(v.union(v.literal('free'), v.literal('vip'))),
     xpMultiplier: v.optional(v.number()),
     planExpiresAt: v.optional(v.number()),
-    planSource: v.optional(v.union(v.literal('admin_grant'), v.literal('iap'), v.literal('stripe'))),
+    planSource: v.optional(v.union(v.literal('admin_grant'), v.literal('iap'), v.literal('stripe'), v.literal('promo_code'))),
     // Idempotency guard for the daily login bonus (dailyBonus.ts) — one
     // claim per gameDayKey, mirroring lastQualifiedDayKey/lastStepGoalDayKey.
     lastDailyBonusDayKey: v.optional(v.string()),
+    // Admin back office (admin.ts): a manual anti-cheat review flag, set by
+    // an admin inspecting a suspicious profile (not an automated detector —
+    // there isn't one yet). Absent/false means "not flagged", same
+    // optional-means-default convention as the rest of this table.
+    flaggedForReview: v.optional(v.boolean()),
+    flagReason: v.optional(v.string()),
+    flaggedAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
@@ -318,4 +325,56 @@ export default defineSchema({
     radiusMeters: v.number(),
     createdAt: v.number(),
   }).index('by_user', ['userId']),
+
+  // Admin back office: codes an admin mints, redeemed once per user via
+  // redeemDiscountCode (a real redeem-in-app flow is a follow-up — for now
+  // this is admin-CRUD + the data model). bonusXpMultiplier ties directly
+  // into the existing userStats.xpMultiplier field a VIP grant also sets,
+  // so a discount code can double as "VIP + a temporary XP boost".
+  discountCodes: defineTable({
+    code: v.string(),
+    percentOff: v.optional(v.number()),
+    bonusXpMultiplier: v.optional(v.number()),
+    active: v.boolean(),
+    maxRedemptions: v.optional(v.number()),
+    redemptionsCount: v.number(),
+    expiresAt: v.optional(v.number()),
+    note: v.optional(v.string()),
+    createdByAdminEmail: v.string(),
+    createdAt: v.number(),
+  }).index('by_code', ['code']),
+
+  // Existence of a (userId, code) row is the idempotency check — one
+  // redemption per user per code, same row-existence pattern used
+  // throughout this schema (userAchievements, poiDiscoveries, ...).
+  discountCodeRedemptions: defineTable({
+    userId: v.id('users'),
+    code: v.string(),
+    redeemedAt: v.number(),
+  })
+    .index('by_user_code', ['userId', 'code'])
+    .index('by_code', ['code']),
+
+  // Admin-minted invite codes — a separate table from discountCodes even
+  // though the shape overlaps, since invites and discounts are different
+  // product concepts (access vs. price) that may diverge in fields later
+  // (e.g. invites eventually granting a starter item bundle).
+  inviteCodes: defineTable({
+    code: v.string(),
+    active: v.boolean(),
+    maxRedemptions: v.optional(v.number()),
+    redemptionsCount: v.number(),
+    expiresAt: v.optional(v.number()),
+    note: v.optional(v.string()),
+    createdByAdminEmail: v.string(),
+    createdAt: v.number(),
+  }).index('by_code', ['code']),
+
+  inviteCodeRedemptions: defineTable({
+    userId: v.id('users'),
+    code: v.string(),
+    redeemedAt: v.number(),
+  })
+    .index('by_user_code', ['userId', 'code'])
+    .index('by_code', ['code']),
 });
