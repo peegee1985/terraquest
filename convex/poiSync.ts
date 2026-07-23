@@ -38,7 +38,49 @@ function buildOverpassQuery(box: { south: number; west: number; north: number; e
   // is short and fixed. `out center;` gives way/relation elements a
   // representative point instead of a full geometry, which is all we need.
   const clauses = OVERPASS_TAG_FILTERS.map((filter) => `nwr[${filter}](${bbox});`).join('\n');
-  return `[out:json][timeout:25];(\n${clauses}\n);\nout center tags;`;
+  // [timeout:60] is the query's own internal processing budget on whichever
+  // instance serves it — 25s proved too tight for this filter list/area and
+  // tripped a 504 on a live run (the public API's own reverse-proxy gateway
+  // timeout, not anything in our code).
+  return `[out:json][timeout:60];(\n${clauses}\n);\nout center tags;`;
+}
+
+// The public de-facto default instance is known to occasionally 504/502/429
+// under load; overpass.kumi.systems mirrors the same data and is the
+// commonly recommended fallback. Retrying across both, with backoff, turns
+// a transient gateway hiccup into a successful run instead of a hard
+// failure — this is a one-off manually-triggered sync, so a few extra
+// seconds of retry is a fine trade for not having to re-dispatch by hand.
+const OVERPASS_ENDPOINTS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+const MAX_OVERPASS_ATTEMPTS = 3;
+const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
+
+async function fetchOverpassElements(query: string): Promise<OsmElement[]> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < MAX_OVERPASS_ATTEMPTS; attempt++) {
+    const endpoint = OVERPASS_ENDPOINTS[attempt % OVERPASS_ENDPOINTS.length];
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: query,
+      });
+      if (response.ok) {
+        const data = (await response.json()) as { elements: OsmElement[] };
+        return data.elements ?? [];
+      }
+      if (!RETRYABLE_STATUSES.has(response.status)) {
+        throw new Error(`syncPoiFromOverpass: Overpass API returned ${response.status}`);
+      }
+      lastError = new Error(`syncPoiFromOverpass: Overpass API returned ${response.status}`);
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt < MAX_OVERPASS_ATTEMPTS - 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2000 * 2 ** attempt));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('syncPoiFromOverpass: Overpass API request failed');
 }
 
 // Simple starting heuristic — "rare" gets a bigger reward (docs 03: 75-150
@@ -84,16 +126,7 @@ export const syncPoiFromOverpass = actionGeneric({
       east: args.east ?? DEFAULT_BOUNDING_BOX.east,
     };
 
-    const response = await fetch('https://overpass-api.de/api/interpreter', {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: buildOverpassQuery(box),
-    });
-    if (!response.ok) {
-      throw new Error(`syncPoiFromOverpass: Overpass API returned ${response.status}`);
-    }
-    const data = (await response.json()) as { elements: OsmElement[] };
-    const elements = data.elements ?? [];
+    const elements = await fetchOverpassElements(buildOverpassQuery(box));
 
     const mapped = elements
       .map((element) => {
