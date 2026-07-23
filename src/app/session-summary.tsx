@@ -21,6 +21,19 @@ function formatDuration(seconds: number): string {
   return `${minutes} min`;
 }
 
+// finishSession (explorer-context.tsx) writes an immediate distance_m:0/
+// new_cells:0 placeholder (via persistSession) the instant the session
+// flips to 'processing', then overwrites it with the real computed values
+// from a fire-and-forget async continuation that awaits several things
+// (a track-point read, a cell count, and since TQ-46 a Health Connect
+// query too) — easily slower than the navigation to this screen. A single
+// one-time read here raced that write and lost: confirmed on a real
+// device, a real multi-minute walk with nonzero confirmed XP rendered as
+// 0.00 km / 0 new units. Polling until unmount is the same
+// eventual-consistency pattern explorer-context.tsx already uses for the
+// live route while a session is active.
+const REFRESH_INTERVAL_MS = 500;
+
 /**
  * TQ-31: reads back the numbers finishSession (explorer-context.tsx) just
  * computed and persisted — the local_session row's distance_m/new_cells/
@@ -46,24 +59,36 @@ export default function SessionSummaryScreen() {
 
   useEffect(() => {
     let cancelled = false;
+    let persistence: Awaited<ReturnType<typeof getLocalPersistence>> | null = null;
+
+    const refresh = async () => {
+      if (!persistence) return;
+      const [sessionRow, projection] = await Promise.all([
+        persistence.session.getById(LOCAL_SESSION_ID),
+        persistence.xpProjection.get(),
+      ]);
+      if (cancelled) return;
+      setData({
+        distanceMeters: sessionRow?.distance_m ?? 0,
+        newExplorationUnits: sessionRow?.new_cells ?? 0,
+        elapsedSeconds: sessionRow?.elapsed_seconds ?? 0,
+        confirmedXp: projection.confirmed_xp,
+        pendingXp: projection.pending_xp,
+      });
+    };
+
     getLocalPersistence()
-      .then(async (persistence) => {
-        const [sessionRow, projection] = await Promise.all([
-          persistence.session.getById(LOCAL_SESSION_ID),
-          persistence.xpProjection.get(),
-        ]);
+      .then((loaded) => {
         if (cancelled) return;
-        setData({
-          distanceMeters: sessionRow?.distance_m ?? 0,
-          newExplorationUnits: sessionRow?.new_cells ?? 0,
-          elapsedSeconds: sessionRow?.elapsed_seconds ?? 0,
-          confirmedXp: projection.confirmed_xp,
-          pendingXp: projection.pending_xp,
-        });
+        persistence = loaded;
+        void refresh();
       })
       .catch(() => undefined);
+
+    const interval = setInterval(() => void refresh(), REFRESH_INTERVAL_MS);
     return () => {
       cancelled = true;
+      clearInterval(interval);
     };
   }, []);
 
