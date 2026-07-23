@@ -125,4 +125,16 @@ export default defineSchema({
   })
     .index('by_user_period', ['userId', 'periodKey'])
     .index('by_user_status', ['userId', 'status']),
+
+  // TQ-27: one row per (user, level) ever reached — existence of a row is
+  // the idempotency check for granting that level's rank/cosmetic/reward
+  // unlock, so a level can never be re-granted no matter how many times
+  // applyXpEvent recomputes level from totalXp.
+  userLevelClaims: defineTable({
+    userId: v.id('users'),
+    level: v.number(),
+    rankId: v.string(),
+    progressionVersion: v.string(),
+    claimedAt: v.number(),
+  }).index('by_user_level', ['userId', 'level']),
 });

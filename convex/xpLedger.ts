@@ -1,6 +1,7 @@
 import { mutationGeneric as mutation, queryGeneric as query } from 'convex/server';
 import { v } from 'convex/values';
 
+import { levelForXp, levelsToClaim, PROGRESSION_VERSION, rankForLevel } from './progressionRules';
 import { capBucketKey, clampToCapBudget, gameDayKey, type XpSourceType } from './xpLedgerRules';
 
 // TQ-26: written against mutationGeneric/queryGeneric from 'convex/server'
@@ -51,6 +52,7 @@ export const applyXpEvent = mutation({
     ledgerId: v.id('xpLedger'),
     awarded: v.number(),
     duplicate: v.boolean(),
+    levelUps: v.array(v.object({ level: v.number(), rankId: v.string() })),
   }),
   handler: async (ctx: any, args: any) => {
     const existingForEvent = await ctx.db
@@ -59,7 +61,7 @@ export const applyXpEvent = mutation({
       .collect();
     const duplicate = existingForEvent.find((row: any) => row.sourceType === args.sourceType);
     if (duplicate) {
-      return { ledgerId: duplicate._id, awarded: 0, duplicate: true };
+      return { ledgerId: duplicate._id, awarded: 0, duplicate: true, levelUps: [] };
     }
 
     const user = await ctx.db.get(args.userId);
@@ -92,20 +94,27 @@ export const applyXpEvent = mutation({
       createdAt: now,
     });
 
-    // Keep userStats.totalXp as a running total in sync within the same
-    // transaction, so it can never drift from the ledger it's derived from.
+    // Keep userStats.totalXp/level/rankId in sync within the same
+    // transaction, so they can never drift from the ledger they're derived
+    // from, and a level-up can never be "half applied" by an interruption
+    // (TQ-27 acceptance criterion: level-up survives interruption).
     const stats = await ctx.db
       .query('userStats')
       .withIndex('by_user', (q: any) => q.eq('userId', args.userId))
       .unique();
+    const previousLevel = stats?.level ?? 1;
+    const newTotalXp = (stats?.totalXp ?? 0) + amount;
+    const newLevel = levelForXp(newTotalXp);
+    const newRankId = rankForLevel(newLevel).rankId;
+
     if (stats) {
-      await ctx.db.patch(stats._id, { totalXp: stats.totalXp + amount, updatedAt: now });
+      await ctx.db.patch(stats._id, { totalXp: newTotalXp, level: newLevel, rankId: newRankId, updatedAt: now });
     } else {
       await ctx.db.insert('userStats', {
         userId: args.userId,
-        totalXp: amount,
-        level: 1,
-        rankId: 'tulak',
+        totalXp: newTotalXp,
+        level: newLevel,
+        rankId: newRankId,
         verifiedSteps: 0,
         verifiedDistanceMeters: 0,
         explorationUnits: 0,
@@ -116,7 +125,31 @@ export const applyXpEvent = mutation({
       });
     }
 
-    return { ledgerId, awarded: amount, duplicate: false };
+    // TQ-27: "odemknutí je idempotentní" — a row's existence in
+    // userLevelClaims IS the idempotency check, so even if this recompute
+    // ever ran twice for the same crossing (it can't within one atomic
+    // mutation, but future callers might recompute defensively), a level's
+    // reward is still granted at most once.
+    const levelUps: { level: number; rankId: string }[] = [];
+    for (const level of levelsToClaim(previousLevel, newLevel)) {
+      const alreadyClaimed = await ctx.db
+        .query('userLevelClaims')
+        .withIndex('by_user_level', (q: any) => q.eq('userId', args.userId).eq('level', level))
+        .unique();
+      if (alreadyClaimed) continue;
+
+      const rankId = rankForLevel(level).rankId;
+      await ctx.db.insert('userLevelClaims', {
+        userId: args.userId,
+        level,
+        rankId,
+        progressionVersion: PROGRESSION_VERSION,
+        claimedAt: now,
+      });
+      levelUps.push({ level, rankId });
+    }
+
+    return { ledgerId, awarded: amount, duplicate: false, levelUps };
   },
 });
 

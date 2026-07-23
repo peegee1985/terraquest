@@ -1,23 +1,32 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { LinearGradient } from 'expo-linear-gradient';
+import type { ComponentProps } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { Card, Eyebrow, MetricCard, ProgressBar, Screen, SectionTitle } from '@/components/ui/primitives';
-import { cumulativeXpForLevel, levelProgress, revealRadiusForLevel } from '@/domain/progression';
+import { cumulativeXpForLevel, levelProgress, rankForLevel, RANK_TIERS, revealRadiusForLevel } from '@/domain/progression';
 import { useExplorer } from '@/state/explorer-context';
 import { colors, radii, spacing, typography } from '@/theme/tokens';
 
-const ranks = [
-  { level: 1, label: 'Tulák', icon: 'circle-small' as const },
-  { level: 5, label: 'Poutník', icon: 'walk' as const },
-  { level: 10, label: 'Průzkumník', icon: 'compass-outline' as const },
-  { level: 15, label: 'Stopář', icon: 'shoe-print' as const },
-  { level: 20, label: 'Kartograf', icon: 'map-outline' as const },
-];
+type RankIconName = ComponentProps<typeof MaterialCommunityIcons>['name'];
+
+// v0.2: 8 tiers now (was 5) — icons are a display-only concern, kept out of
+// the pure domain module (RANK_TIERS) alongside the rest of progression.ts.
+const RANK_ICONS: Record<string, RankIconName> = {
+  tulak: 'circle-small',
+  poutnik: 'walk',
+  pruzkumnik: 'compass-outline',
+  stopar: 'shoe-print',
+  kartograf: 'map-outline',
+  cestovatel: 'map-marker-path',
+  expedicionar: 'flag-variant-outline',
+  legenda_mapy: 'trophy-outline',
+};
 
 export default function ProgressScreen() {
   const { snapshot } = useExplorer();
   const progress = levelProgress(snapshot.totalXp);
+  const currentRank = rankForLevel(progress.level);
 
   return (
     <Screen>
@@ -26,7 +35,7 @@ export default function ProgressScreen() {
           <MaterialCommunityIcons color={colors.brand} name="compass-rose" size={42} />
         </View>
         <View style={styles.profileCopy}>
-          <Eyebrow>Poutník • level {progress.level}</Eyebrow>
+          <Eyebrow>{currentRank.label} • level {progress.level}</Eyebrow>
           <Text style={styles.title}>Petr</Text>
           <Text style={styles.subtitle}>Tvá mapa je soukromá. Sdílí se jen statistiky, které povolíš.</Text>
         </View>
@@ -54,19 +63,19 @@ export default function ProgressScreen() {
 
       <SectionTitle title="Cesta průzkumníka" />
       <Card style={styles.ranksCard}>
-        {ranks.map((rank, index) => {
+        {RANK_TIERS.map((rank, index) => {
           const unlocked = progress.level >= rank.level;
           return (
-            <View key={rank.label} style={styles.rankRow}>
+            <View key={rank.rankId} style={styles.rankRow}>
               <View style={[styles.rankNode, unlocked ? styles.rankNodeUnlocked : undefined]}>
-                <MaterialCommunityIcons color={unlocked ? colors.onBrand : colors.textDisabled} name={rank.icon} size={20} />
+                <MaterialCommunityIcons color={unlocked ? colors.onBrand : colors.textDisabled} name={RANK_ICONS[rank.rankId]} size={20} />
               </View>
               <View style={styles.rankCopy}>
                 <Text style={[styles.rankTitle, !unlocked && styles.lockedText]}>{rank.label}</Text>
                 <Text style={styles.rankLevel}>Úroveň {rank.level}</Text>
               </View>
               {unlocked ? <MaterialCommunityIcons color={colors.brand} name="check-circle" size={22} /> : <MaterialCommunityIcons color={colors.textDisabled} name="lock-outline" size={20} />}
-              {index < ranks.length - 1 ? <View style={[styles.rankLine, unlocked && progress.level >= ranks[index + 1].level ? styles.rankLineUnlocked : undefined]} /> : null}
+              {index < RANK_TIERS.length - 1 ? <View style={[styles.rankLine, unlocked && progress.level >= RANK_TIERS[index + 1].level ? styles.rankLineUnlocked : undefined]} /> : null}
             </View>
           );
         })}
