@@ -1,5 +1,6 @@
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
+import { PermissionsAndroid, Platform } from 'react-native';
 
 import { trackingProfileForMode, type TrackingProfile } from './tracking-profile';
 
@@ -131,9 +132,24 @@ async function startWatchFallback(profile: TrackingProfile): Promise<void> {
   });
 }
 
+// Android 13+ (API 33+) gates ALL notifications behind a separate runtime
+// permission from location — without it, the OS silently drops the
+// foreground service's persistent notification without throwing anything:
+// the service keeps running and location keeps flowing (confirmed by
+// on-device testing — points and XP kept accumulating through a screen
+// lock), but the user never sees the notification that's supposed to make
+// that background activity visible. `killServiceOnDestroy: false` and the
+// notification config above are otherwise inert without this.
+async function ensureNotificationPermission(): Promise<void> {
+  if (Platform.OS !== 'android' || Platform.Version < 33) return;
+  await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS).catch(() => undefined);
+}
+
 export async function startLocationTracking(profile: TrackingProfile = 'precise'): Promise<void> {
   const { status } = await Location.getForegroundPermissionsAsync();
   if (status !== 'granted') return;
+
+  await ensureNotificationPermission();
 
   try {
     await Location.startLocationUpdatesAsync(LOCATION_TRACKING_TASK_NAME, optionsForProfile(profile));
