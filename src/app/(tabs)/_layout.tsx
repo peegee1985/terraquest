@@ -1,5 +1,6 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { Tabs } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors, typography } from '@/theme/tokens';
 
@@ -9,7 +10,16 @@ function TabIcon({ name, color }: { name: IconName; color: React.ComponentProps<
   return <MaterialCommunityIcons color={color} name={name} size={24} />;
 }
 
+const TAB_BAR_CONTENT_HEIGHT = 52;
+
 export default function TabsLayout() {
+  // A hardcoded tabBarStyle.height (the previous `72`) opts the bar out of
+  // react-navigation's own automatic bottom-inset padding — on Android's
+  // 3-button/gesture nav, that left the bar sitting flush against (or
+  // partly behind) the system bar. Adding insets.bottom back in restores
+  // the same effective tap-target height that removing the override would
+  // give for free, just with an explicit number to reason about.
+  const insets = useSafeAreaInsets();
   return (
     <Tabs
       screenOptions={{
@@ -19,9 +29,9 @@ export default function TabsLayout() {
         tabBarStyle: {
           backgroundColor: colors.surface,
           borderTopColor: colors.outline,
-          height: 72,
+          height: TAB_BAR_CONTENT_HEIGHT + insets.bottom,
           paddingTop: 8,
-          paddingBottom: 10,
+          paddingBottom: insets.bottom + 10,
         },
         tabBarLabelStyle: {
           fontSize: typography.caption.fontSize,

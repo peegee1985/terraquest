@@ -194,6 +194,16 @@ describe('explored cell repository', () => {
 
     expect(await cells.countNormalizedForXp()).toBe(1);
   });
+
+  it('deleteAll wipes every revealed cell ("Smazat historii")', async () => {
+    const cells = createExploredCellRepository(db);
+    await cells.upsertSeen({ h3Index: 'cell-z', seenAt: 1000, modeBit: 0b01, sourceSessionId: 'primary' });
+
+    await cells.deleteAll();
+
+    expect(await cells.listAllCellIds()).toEqual([]);
+    expect(await cells.count()).toBe(0);
+  });
 });
 
 describe('transactional atomicity', () => {

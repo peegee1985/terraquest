@@ -1,3 +1,4 @@
+import { getAuthUserId } from '@convex-dev/auth/server';
 import { mutationGeneric as mutation, queryGeneric as query } from 'convex/server';
 import { v } from 'convex/values';
 
@@ -52,26 +53,33 @@ function toQuestRow(row: any) {
  * here: detecting a 14-day new-exploration-units plateau needs a rolling
  * activity history this function doesn't have access to (see questRules.ts
  * module comment) — a reasonable future refinement, not this task's scope.
+ *
+ * userId comes from getAuthUserId(ctx), not a client-supplied argument —
+ * this became the first real client caller (the quests screen), so it
+ * needs the same identity guarantee as submitTrackingSession/discoverPoi:
+ * no caller can generate/read another user's quests by supplying their id.
  */
 export const ensureDailyQuests = mutation({
-  args: { userId: v.id('users'), now: v.number(), isExplorationSaturated: v.boolean() },
+  args: { now: v.number(), isExplorationSaturated: v.boolean() },
   returns: v.array(questRowValidator),
   handler: async (ctx: any, args: any) => {
-    const user = await ctx.db.get(args.userId);
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error('ensureDailyQuests: not authenticated');
+    const user = await ctx.db.get(userId);
     if (!user) throw new Error('ensureDailyQuests: user not found');
 
     const dayKey = gameDayKey(args.now, user.timezone);
     const existing = await ctx.db
       .query('userQuests')
-      .withIndex('by_user_period', (q: any) => q.eq('userId', args.userId).eq('periodKey', dayKey))
+      .withIndex('by_user_period', (q: any) => q.eq('userId', userId).eq('periodKey', dayKey))
       .collect();
     if (existing.length > 0) return existing.map(toQuestRow);
 
-    const definitions = generateDailyQuests(args.userId, dayKey, args.isExplorationSaturated);
+    const definitions = generateDailyQuests(userId, dayKey, args.isExplorationSaturated);
     const rows: ReturnType<typeof toQuestRow>[] = [];
     for (const definition of definitions) {
       const _id = await ctx.db.insert('userQuests', {
-        userId: args.userId,
+        userId,
         definitionId: definition.definitionId,
         periodKey: dayKey,
         category: definition.category,
@@ -89,24 +97,26 @@ export const ensureDailyQuests = mutation({
   },
 });
 
-/** Same idempotency shape as ensureDailyQuests, keyed by week instead of day. */
+/** Same idempotency shape as ensureDailyQuests, keyed by week instead of day; same auth-derived userId. */
 export const ensureWeeklyQuest = mutation({
-  args: { userId: v.id('users'), now: v.number() },
+  args: { now: v.number() },
   returns: questRowValidator,
   handler: async (ctx: any, args: any) => {
-    const user = await ctx.db.get(args.userId);
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error('ensureWeeklyQuest: not authenticated');
+    const user = await ctx.db.get(userId);
     if (!user) throw new Error('ensureWeeklyQuest: user not found');
 
     const weekKey = gameWeekKey(args.now, user.timezone);
     const existing = await ctx.db
       .query('userQuests')
-      .withIndex('by_user_period', (q: any) => q.eq('userId', args.userId).eq('periodKey', weekKey))
+      .withIndex('by_user_period', (q: any) => q.eq('userId', userId).eq('periodKey', weekKey))
       .unique();
     if (existing) return toQuestRow(existing);
 
-    const definition = generateWeeklyQuest(args.userId, weekKey);
+    const definition = generateWeeklyQuest(userId, weekKey);
     const _id = await ctx.db.insert('userQuests', {
-      userId: args.userId,
+      userId,
       definitionId: definition.definitionId,
       periodKey: weekKey,
       category: definition.category,
@@ -122,21 +132,77 @@ export const ensureWeeklyQuest = mutation({
   },
 });
 
-/** Advances a quest's progress; flips it to 'completed' once target is met. A no-op once the quest is no longer 'active' (already completed/claimed/expired), so replaying the same progress update never re-fires completion. */
+/**
+ * Advances a quest's progress; flips it to 'completed' once target is met.
+ * A no-op once the quest is no longer 'active' (already
+ * completed/claimed/expired), so replaying the same progress update never
+ * re-fires completion. Plain function (not exported as a mutation directly)
+ * so submitTrackingSession (sessions.ts) can call it within its own
+ * transaction — a session's quest progress should land in the same commit
+ * as its XP, not a separate round trip.
+ */
+async function applyUpdateQuestProgress(ctx: any, args: { questId: any; progress: number; now: number }): Promise<void> {
+  const quest = await ctx.db.get(args.questId);
+  if (!quest || quest.status !== 'active') return;
+
+  const progress = Math.max(quest.progress, args.progress);
+  const completed = progress >= quest.target;
+  await ctx.db.patch(args.questId, {
+    progress,
+    status: completed ? 'completed' : 'active',
+    completedAt: completed ? args.now : undefined,
+  });
+}
+
+/**
+ * TQ-31 adjacent: called from submitTrackingSession once a tracked session
+ * ends, bumping every active quest (today's daily periodKey + this week's
+ * weekly periodKey) whose metric this session actually produced evidence
+ * for. `steps` quests are deliberately skipped — no step-counting source
+ * exists yet (TQ-46, still backlog) — so a movement-category "steps" quest
+ * simply never progresses until that lands; every other metric this
+ * project currently generates (new_units, active_minutes, distance_m) is
+ * covered.
+ */
+export async function applyQuestProgressForSession(
+  ctx: any,
+  args: { userId: any; now: number; distanceMeters: number; newExplorationUnitsCount: number; elapsedSeconds: number },
+): Promise<void> {
+  const user = await ctx.db.get(args.userId);
+  if (!user) return;
+
+  const dayKey = gameDayKey(args.now, user.timezone);
+  const weekKey = gameWeekKey(args.now, user.timezone);
+  const [dailyRows, weeklyRows] = await Promise.all([
+    ctx.db.query('userQuests').withIndex('by_user_period', (q: any) => q.eq('userId', args.userId).eq('periodKey', dayKey)).collect(),
+    ctx.db.query('userQuests').withIndex('by_user_period', (q: any) => q.eq('userId', args.userId).eq('periodKey', weekKey)).collect(),
+  ]);
+
+  const activeMinutes = Math.floor(args.elapsedSeconds / 60);
+  const contributionFor = (metric: string): number => {
+    if (metric === 'new_units') return args.newExplorationUnitsCount;
+    if (metric === 'active_minutes') return activeMinutes;
+    if (metric === 'distance_m') return args.distanceMeters;
+    return 0; // 'steps' — no source yet.
+  };
+
+  for (const quest of [...dailyRows, ...weeklyRows]) {
+    if (quest.status !== 'active') continue;
+    const contribution = contributionFor(quest.metric);
+    if (contribution <= 0) continue;
+    await applyUpdateQuestProgress(ctx, { questId: quest._id, progress: quest.progress + contribution, now: args.now });
+  }
+}
+
 export const updateQuestProgress = mutation({
   args: { questId: v.id('userQuests'), progress: v.number(), now: v.number() },
   returns: v.null(),
   handler: async (ctx: any, args: any) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error('updateQuestProgress: not authenticated');
     const quest = await ctx.db.get(args.questId);
-    if (!quest || quest.status !== 'active') return null;
-
-    const progress = Math.max(quest.progress, args.progress);
-    const completed = progress >= quest.target;
-    await ctx.db.patch(args.questId, {
-      progress,
-      status: completed ? 'completed' : 'active',
-      completedAt: completed ? args.now : undefined,
-    });
+    if (!quest || quest.userId !== userId) return null;
+    await applyUpdateQuestProgress(ctx, args);
     return null;
   },
 });
@@ -145,14 +211,19 @@ export const updateQuestProgress = mutation({
  * TQ-28 acceptance criterion "claim je jednorázový": guarded twice —
  * the status check here (only 'completed' quests can be claimed, so a
  * second call sees 'claimed' and is a no-op) and, underneath, awardXp's own
- * eventId dedup for a concurrent double-claim race.
+ * eventId dedup for a concurrent double-claim race. Ownership (quest.userId
+ * === the caller) is checked via getAuthUserId(ctx) since this is a real
+ * client-invoked mutation (the quests screen's "claim" button) — a client
+ * only ever supplies the questId, never whose quest it is.
  */
 export const claimQuest = mutation({
   args: { questId: v.id('userQuests'), now: v.number() },
   returns: v.object({ claimed: v.boolean(), awarded: v.number() }),
   handler: async (ctx: any, args: any) => {
+    const callerId = await getAuthUserId(ctx);
+    if (!callerId) throw new Error('claimQuest: not authenticated');
     const quest = await ctx.db.get(args.questId);
-    if (!quest || quest.status !== 'completed') return { claimed: false, awarded: 0 };
+    if (!quest || quest.userId !== callerId || quest.status !== 'completed') return { claimed: false, awarded: 0 };
 
     const result = await awardXp(ctx, {
       userId: quest.userId,
@@ -274,20 +345,40 @@ export async function applyRecordQualifyingDay(
 }
 
 export const recordQualifyingDay = mutation({
-  args: { userId: v.id('users'), now: v.number() },
+  args: { now: v.number() },
   returns: v.object({ currentStreakDays: v.number(), streakChanged: v.boolean(), restTokenConsumed: v.boolean() }),
-  handler: async (ctx: any, args: any) => applyRecordQualifyingDay(ctx, args),
+  handler: async (ctx: any, args: any) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error('recordQualifyingDay: not authenticated');
+    return applyRecordQualifyingDay(ctx, { userId, now: args.now });
+  },
 });
 
-/** Read-only view of a user's currently active/completed quests for a given period. */
-export const listQuestsForPeriod = query({
-  args: { userId: v.id('users'), periodKey: v.string() },
-  returns: v.array(questRowValidator),
+/**
+ * Read-only board for the quests screen: today's daily quests + this
+ * week's quest, in one call so the client never needs to replicate
+ * gameDayKey/gameWeekKey's timezone-dependent logic itself. userId comes
+ * from getAuthUserId(ctx) — same reasoning as ensureDailyQuests above.
+ */
+export const getMyQuestBoard = query({
+  args: { now: v.number() },
+  returns: v.object({ daily: v.array(questRowValidator), weekly: v.optional(questRowValidator) }),
   handler: async (ctx: any, args: any) => {
-    const rows = await ctx.db
-      .query('userQuests')
-      .withIndex('by_user_period', (q: any) => q.eq('userId', args.userId).eq('periodKey', args.periodKey))
-      .collect();
-    return rows.map(toQuestRow);
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return { daily: [], weekly: undefined };
+    const user = await ctx.db.get(userId);
+    if (!user) return { daily: [], weekly: undefined };
+
+    const dayKey = gameDayKey(args.now, user.timezone);
+    const weekKey = gameWeekKey(args.now, user.timezone);
+    const [dailyRows, weeklyRows] = await Promise.all([
+      ctx.db.query('userQuests').withIndex('by_user_period', (q: any) => q.eq('userId', userId).eq('periodKey', dayKey)).collect(),
+      ctx.db.query('userQuests').withIndex('by_user_period', (q: any) => q.eq('userId', userId).eq('periodKey', weekKey)).collect(),
+    ]);
+    const weekly = weeklyRows.find((row: any) => row.kind === 'weekly');
+    return {
+      daily: dailyRows.filter((row: any) => row.kind === 'daily').map(toQuestRow),
+      weekly: weekly ? toQuestRow(weekly) : undefined,
+    };
   },
 });

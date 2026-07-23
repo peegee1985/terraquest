@@ -1,14 +1,113 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import { StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
-import { Card, Eyebrow, ProgressBar, QuestCard, Screen, SectionTitle } from '@/components/ui/primitives';
-import { useExplorer } from '@/state/explorer-context';
+import { Card, Eyebrow, PrimaryButton, ProgressBar, QuestCard, Screen, SectionTitle } from '@/components/ui/primitives';
+import { convex } from '@/state/convex-client';
+import { QuestCategory, QuestMetric, QuestRow, useClaimQuest, useEnsureDailyQuests, useEnsureWeeklyQuest, useMyQuestBoard } from '@/state/quests-client';
+import { Quest, QuestTone } from '@/domain/types';
 import { colors, radii, spacing, typography } from '@/theme/tokens';
 
-export default function QuestsScreen() {
-  const { quests } = useExplorer();
-  const complete = quests.filter((quest) => quest.completed).length;
+const CATEGORY_TONE: Record<QuestCategory, QuestTone> = { movement: 'brand', exploration: 'blue', discovery: 'amber' };
+const METRIC_COPY: Record<QuestMetric, { title: string; description: string; unit: string; divisor: number }> = {
+  steps: { title: 'Ujdi kroky', description: 'Sečti kroky během dne. (Počítání kroků zatím není zapojené — tenhle úkol se nedá splnit.)', unit: 'kroků', divisor: 1 },
+  new_units: { title: 'Odkryj nové území', description: 'Projdi místa, která ještě nejsou na tvé mapě.', unit: 'jednotek', divisor: 1 },
+  active_minutes: { title: 'Buď v pohybu', description: 'Stráv čas aktivním průzkumem.', unit: 'min', divisor: 1 },
+  distance_m: { title: 'Ujdi vzdálenost', description: 'Naskládej kilometry během celého týdne.', unit: 'km', divisor: 1000 },
+};
 
+function toDisplayQuest(row: QuestRow): Quest {
+  const copy = METRIC_COPY[row.metric];
+  return {
+    id: row._id,
+    title: copy.title,
+    description: copy.description,
+    progress: row.progress / copy.divisor,
+    target: row.target / copy.divisor,
+    unit: copy.unit,
+    rewardXp: row.rewardXp,
+    tone: CATEGORY_TONE[row.category],
+    completed: row.status === 'completed' || row.status === 'claimed',
+  };
+}
+
+function ClaimableQuestCard({ row }: { row: QuestRow }) {
+  const claimQuest = useClaimQuest();
+  const [claiming, setClaiming] = useState(false);
+  const claimable = row.status === 'completed';
+  const claimed = row.status === 'claimed';
+
+  return (
+    <View style={styles.claimWrap}>
+      <QuestCard quest={toDisplayQuest(row)} />
+      {claimable ? (
+        <PrimaryButton
+          icon="gift-outline"
+          label={claiming ? 'Vyzvedávám...' : `Vyzvednout +${row.rewardXp} XP`}
+          onPress={async () => {
+            setClaiming(true);
+            await claimQuest({ questId: row._id, now: Date.now() }).catch(() => undefined);
+            setClaiming(false);
+          }}
+        />
+      ) : claimed ? (
+        <Text style={styles.claimedLabel}>Vyzvednuto</Text>
+      ) : null}
+    </View>
+  );
+}
+
+function QuestsBoard() {
+  const [now] = useState(() => Date.now());
+  const ensureDaily = useEnsureDailyQuests();
+  const ensureWeekly = useEnsureWeeklyQuest();
+  const board = useMyQuestBoard(now);
+
+  useEffect(() => {
+    // Idempotent on the server (existing periodKey rows are just returned
+    // as-is) — safe to fire on every mount without risking duplicates.
+    void ensureDaily({ now, isExplorationSaturated: false });
+    void ensureWeekly({ now });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (board === undefined) {
+    return (
+      <Card style={styles.centeredCard}>
+        <ActivityIndicator color={colors.brand} />
+      </Card>
+    );
+  }
+
+  const complete = board.daily.filter((quest) => quest.status === 'completed' || quest.status === 'claimed').length;
+
+  return (
+    <>
+      <Card style={styles.dailySummary}>
+        <View style={styles.summaryIcon}>
+          <MaterialCommunityIcons color={colors.amber} name="weather-sunset" size={28} />
+        </View>
+        <View style={styles.summaryText}>
+          <Text style={styles.summaryTitle}>Denní série</Text>
+          <Text style={styles.summaryDescription}>{complete} ze {board.daily.length || 3} výprav dokončeno</Text>
+          <ProgressBar color={colors.amber} progress={board.daily.length ? complete / board.daily.length : 0} />
+        </View>
+      </Card>
+
+      <SectionTitle title="Dnes" />
+      {board.daily.map((row) => <ClaimableQuestCard key={row._id} row={row} />)}
+
+      <SectionTitle title="Tento týden" />
+      {board.weekly ? <ClaimableQuestCard row={board.weekly} /> : (
+        <Card style={styles.centeredCard}>
+          <ActivityIndicator color={colors.brand} />
+        </Card>
+      )}
+    </>
+  );
+}
+
+export default function QuestsScreen() {
   return (
     <Screen>
       <View>
@@ -17,38 +116,13 @@ export default function QuestsScreen() {
         <Text style={styles.subtitle}>Úkoly se přizpůsobí tvému běžnému pohybu a dostupným místům.</Text>
       </View>
 
-      <Card style={styles.dailySummary}>
-        <View style={styles.summaryIcon}>
-          <MaterialCommunityIcons color={colors.amber} name="weather-sunset" size={28} />
-        </View>
-        <View style={styles.summaryText}>
-          <Text style={styles.summaryTitle}>Denní série</Text>
-          <Text style={styles.summaryDescription}>{complete} ze 3 výprav dokončeno</Text>
-          <ProgressBar color={colors.amber} progress={complete / 3} />
-        </View>
-      </Card>
-
-      <SectionTitle action="Obnova za 03:42" title="Dnes" />
-      {quests.map((quest) => <QuestCard key={quest.id} quest={quest} />)}
-
-      <SectionTitle title="Tento týden" />
-      <Card>
-        <View style={styles.weekHeader}>
-          <View style={[styles.summaryIcon, { backgroundColor: colors.blueSoft }]}>
-            <MaterialCommunityIcons color={colors.blue} name="map-marker-distance" size={26} />
-          </View>
-          <View style={styles.summaryText}>
-            <Text style={styles.summaryTitle}>Pět cest, jeden týden</Text>
-            <Text style={styles.summaryDescription}>Ujdi 20 km alespoň ve čtyřech dnech.</Text>
-          </View>
-          <Text style={styles.weekXp}>+500 XP</Text>
-        </View>
-        <View style={styles.weekProgressRow}>
-          <Text style={styles.summaryDescription}>11,4 / 20 km</Text>
-          <Text style={styles.weekPercent}>57 %</Text>
-        </View>
-        <ProgressBar color={colors.blue} progress={0.57} />
-      </Card>
+      {convex ? (
+        <QuestsBoard />
+      ) : (
+        <Card>
+          <Text style={styles.summaryDescription}>Výpravy vyžadují připojení k serveru, které v tomto sestavení není nastavené.</Text>
+        </Card>
+      )}
 
       <View style={styles.safetyNote}>
         <MaterialCommunityIcons color={colors.textSecondary} name="shield-check-outline" size={20} />
@@ -66,10 +140,9 @@ const styles = StyleSheet.create({
   summaryText: { flex: 1, gap: 5 },
   summaryTitle: { ...typography.h3, color: colors.textPrimary },
   summaryDescription: { ...typography.caption, color: colors.textSecondary },
-  weekHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  weekXp: { ...typography.label, color: colors.blue },
-  weekProgressRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: spacing.md, marginBottom: spacing.xs },
-  weekPercent: { ...typography.caption, color: colors.blue, fontWeight: '700' },
+  centeredCard: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.xl },
+  claimWrap: { gap: spacing.xs },
+  claimedLabel: { ...typography.label, color: colors.textSecondary, textAlign: 'center', marginTop: -spacing.xs, marginBottom: spacing.xs },
   safetyNote: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, padding: spacing.md, borderRadius: radii.md, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.outline },
   safetyText: { ...typography.caption, color: colors.textSecondary, flex: 1 },
 });

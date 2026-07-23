@@ -131,6 +131,9 @@ function createInMemoryPersistence(): LocalPersistence {
       async count() {
         return exploredCells.size;
       },
+      async deleteAll() {
+        exploredCells.clear();
+      },
     },
     outbox: {
       async enqueue(input) {

@@ -1,3 +1,4 @@
+import { getAuthUserId } from '@convex-dev/auth/server';
 import { mutationGeneric as mutation, queryGeneric as query } from 'convex/server';
 import { v } from 'convex/values';
 
@@ -100,23 +101,29 @@ export const listCountryLeaderboard = query({
  * Friends leaderboard — the "lightweight" follow graph (TQ-45's `follows`
  * table), not the full bidirectional friendships system. Includes the
  * requesting user themselves, since comparing yourself against who you
- * follow is the whole point of this view.
+ * follow is the whole point of this view. userId comes from
+ * getAuthUserId(ctx), not a client-supplied argument — this became the
+ * first real client caller, so a caller can only ever see their OWN
+ * friends leaderboard, never spoof another user's follow graph.
  */
 export const listFriendsLeaderboard = query({
-  args: { userId: v.id('users'), metric: metricValidator },
+  args: { metric: metricValidator },
   returns: v.array(leaderboardEntryValidator),
   handler: async (ctx: any, args: any) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+
     const follows = await ctx.db
       .query('follows')
-      .withIndex('by_follower_following', (q: any) => q.eq('followerId', args.userId))
+      .withIndex('by_follower_following', (q: any) => q.eq('followerId', userId))
       .collect();
-    const userIds = [args.userId, ...follows.map((row: any) => row.followingId)];
+    const userIds = [userId, ...follows.map((row: any) => row.followingId)];
 
     const entries: LeaderboardEntry<{ userId: any; handle: string; displayName?: string; avatarId: string }>[] = [];
-    for (const userId of userIds) {
+    for (const otherId of userIds) {
       const stats: StatsRow | null = await ctx.db
         .query('userStats')
-        .withIndex('by_user', (q: any) => q.eq('userId', userId))
+        .withIndex('by_user', (q: any) => q.eq('userId', otherId))
         .unique();
       if (!stats) continue;
       const entry = await buildEntry(ctx, stats, args.metric);
@@ -126,38 +133,73 @@ export const listFriendsLeaderboard = query({
   },
 });
 
-/** Idempotent: following someone already followed just returns the existing relationship rather than erroring or duplicating. */
+/**
+ * Idempotent: following someone already followed just returns the existing
+ * relationship rather than erroring or duplicating. followerId comes from
+ * getAuthUserId(ctx) — a client can only ever create a follow edge FROM
+ * itself, matching every other identity-derivation in this project.
+ */
 export const followByHandle = mutation({
-  args: { followerId: v.id('users'), handle: v.string() },
+  args: { handle: v.string() },
   returns: v.object({ followingId: v.id('users'), handle: v.string() }),
   handler: async (ctx: any, args: any) => {
+    const followerId = await getAuthUserId(ctx);
+    if (!followerId) throw new Error('followByHandle: not authenticated');
+
     const target = await ctx.db
       .query('users')
       .withIndex('by_handle', (q: any) => q.eq('handle', args.handle))
       .unique();
     if (!target) throw new Error('followByHandle: no user with that handle');
-    if (target._id === args.followerId) throw new Error('followByHandle: cannot follow yourself');
+    if (target._id === followerId) throw new Error('followByHandle: cannot follow yourself');
 
     const existing = await ctx.db
       .query('follows')
-      .withIndex('by_follower_following', (q: any) => q.eq('followerId', args.followerId).eq('followingId', target._id))
+      .withIndex('by_follower_following', (q: any) => q.eq('followerId', followerId).eq('followingId', target._id))
       .unique();
     if (!existing) {
-      await ctx.db.insert('follows', { followerId: args.followerId, followingId: target._id, createdAt: Date.now() });
+      await ctx.db.insert('follows', { followerId, followingId: target._id, createdAt: Date.now() });
     }
     return { followingId: target._id, handle: target.handle };
   },
 });
 
 export const unfollow = mutation({
-  args: { followerId: v.id('users'), followingId: v.id('users') },
+  args: { followingId: v.id('users') },
   returns: v.null(),
   handler: async (ctx: any, args: any) => {
+    const followerId = await getAuthUserId(ctx);
+    if (!followerId) throw new Error('unfollow: not authenticated');
     const existing = await ctx.db
       .query('follows')
-      .withIndex('by_follower_following', (q: any) => q.eq('followerId', args.followerId).eq('followingId', args.followingId))
+      .withIndex('by_follower_following', (q: any) => q.eq('followerId', followerId).eq('followingId', args.followingId))
       .unique();
     if (existing) await ctx.db.delete(existing._id);
     return null;
+  },
+});
+
+/**
+ * The friends leaderboard needs to show who you already follow (so the
+ * invite UI can list/unfollow them), separate from the ranked-by-score
+ * view above. Returns handle/displayName/avatarId per followed user —
+ * enough for a simple list row, nothing else.
+ */
+export const listMyFollowing = query({
+  args: {},
+  returns: v.array(v.object({ userId: v.id('users'), handle: v.string(), displayName: v.optional(v.string()), avatarId: v.string() })),
+  handler: async (ctx: any) => {
+    const followerId = await getAuthUserId(ctx);
+    if (!followerId) return [];
+    const follows = await ctx.db
+      .query('follows')
+      .withIndex('by_follower_following', (q: any) => q.eq('followerId', followerId))
+      .collect();
+    const rows = [];
+    for (const follow of follows) {
+      const user: UserRow | null = await ctx.db.get(follow.followingId);
+      if (user) rows.push({ userId: follow.followingId, handle: user.handle, displayName: user.displayName, avatarId: user.avatarId });
+    }
+    return rows;
   },
 });

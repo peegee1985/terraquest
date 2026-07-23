@@ -3,7 +3,7 @@ import { mutationGeneric as mutation } from 'convex/server';
 import { v } from 'convex/values';
 
 import { PROGRESSION_VERSION } from './progressionRules';
-import { applyRecordQualifyingDay } from './quests';
+import { applyQuestProgressForSession, applyRecordQualifyingDay } from './quests';
 import { bumpUserStatsCounter } from './userStatsCounters';
 import { awardXp } from './xpAward';
 import { distanceXp, explorationXp, sessionQualifiesForStreak } from './xpLedgerRules';
@@ -77,6 +77,14 @@ export const submitTrackingSession = mutation({
     if (sessionQualifiesForStreak(args.movementMode, args.elapsedSeconds, args.distanceMeters)) {
       await applyRecordQualifyingDay(ctx, { userId, now: args.endedAt });
     }
+
+    await applyQuestProgressForSession(ctx, {
+      userId,
+      now: args.endedAt,
+      distanceMeters: Math.max(0, args.distanceMeters),
+      newExplorationUnitsCount: Math.max(0, args.newExplorationUnitsCount),
+      elapsedSeconds: Math.max(0, args.elapsedSeconds),
+    });
 
     const stats = await ctx.db
       .query('userStats')

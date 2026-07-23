@@ -1,6 +1,7 @@
 import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { ReactNode, useEffect } from 'react';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { AppErrorBoundary } from '@/components/app-error-boundary';
 import { AuthProvider } from '@/state/auth-context';
@@ -49,17 +50,19 @@ function RootLayout() {
   }, []);
 
   return (
-    <AppErrorBoundary>
-      <BackendProvider>
-        <ExplorerProvider>
-          <ThemeProvider value={navigationTheme}>
-            <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
-              <Stack.Screen name="(tabs)" />
-            </Stack>
-          </ThemeProvider>
-        </ExplorerProvider>
-      </BackendProvider>
-    </AppErrorBoundary>
+    <SafeAreaProvider>
+      <AppErrorBoundary>
+        <BackendProvider>
+          <ExplorerProvider>
+            <ThemeProvider value={navigationTheme}>
+              <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
+                <Stack.Screen name="(tabs)" />
+              </Stack>
+            </ThemeProvider>
+          </ExplorerProvider>
+        </BackendProvider>
+      </AppErrorBoundary>
+    </SafeAreaProvider>
   );
 }
 

@@ -43,6 +43,7 @@ type ExplorerContextValue = {
   startSession: (mode?: MovementMode) => void;
   togglePause: () => void;
   finishSession: () => void;
+  resetLocalHistory: () => Promise<{ ok: boolean; reason?: string }>;
 };
 
 const MAX_ROUTE_POINTS = 500;
@@ -423,9 +424,31 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
       .catch(() => undefined);
   }, [persistSession]);
 
+  // TQ-35 (scoped MVP): "Smazat historii" in settings.tsx — wipes the
+  // local route/fog/session data this device has recorded. Deliberately
+  // local-only: the server-confirmed XP ledger (the source of truth for
+  // leaderboards/levels) is never touched here, since deleting THAT is a
+  // much bigger, irreversible "delete my account" operation out of scope
+  // for this task. Refuses while a session is active/paused — stopping a
+  // live tracking session as a side effect of a "delete" action would be
+  // surprising, so the caller is asked to finish it first.
+  const resetLocalHistory = useCallback(async (): Promise<{ ok: boolean; reason?: string }> => {
+    if (session.active) return { ok: false, reason: 'session_active' };
+    const persistence = persistenceRef.current;
+    if (!persistence) return { ok: false, reason: 'not_ready' };
+
+    await persistence.trackPoints.deleteBySession(LOCAL_SESSION_ID);
+    await persistence.exploredCells.deleteAll();
+    await persistence.session.delete(LOCAL_SESSION_ID);
+    nextSequenceRef.current = 0;
+    setSession(initialSession);
+    setRevealedCells([]);
+    return { ok: true };
+  }, [session.active]);
+
   const value = useMemo(
-    () => ({ snapshot, quests, session, hasCompletedSession, revealedCells, startSession, togglePause, finishSession }),
-    [finishSession, hasCompletedSession, quests, revealedCells, session, snapshot, startSession, togglePause],
+    () => ({ snapshot, quests, session, hasCompletedSession, revealedCells, startSession, togglePause, finishSession, resetLocalHistory }),
+    [finishSession, hasCompletedSession, quests, resetLocalHistory, revealedCells, session, snapshot, startSession, togglePause],
   );
 
   return <ExplorerContext.Provider value={value}>{children}</ExplorerContext.Provider>;

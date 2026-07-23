@@ -63,6 +63,11 @@ export function createExploredCellRepository(db: LocalDb) {
       const row = await db.get<{ total: number }>('SELECT COUNT(*) as total FROM local_explored_cell;');
       return row?.total ?? 0;
     },
+
+    /** "Smazat historii" (settings.tsx) — wipes the persistent fog reveal entirely, local-only (never touches the server-confirmed XP ledger). */
+    async deleteAll(): Promise<void> {
+      await db.run('DELETE FROM local_explored_cell;');
+    },
   };
 }
 

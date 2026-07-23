@@ -265,4 +265,19 @@ export default defineSchema({
     quantity: v.number(),
     updatedAt: v.number(),
   }).index('by_user_item', ['userId', 'itemId']),
+
+  // TQ-34 (scoped MVP for a one-day delivery): a user-defined circle they
+  // want kept out of anything shared/exported — "Export mých dat" redacts
+  // any of their own track points that fall inside one of these before
+  // building the export bundle (src/domain/privacy-zones.ts's
+  // redactPointsInZones). Masking the live map/fog rendering itself is a
+  // real follow-up, not done here — this only covers the export path today.
+  privateZones: defineTable({
+    userId: v.id('users'),
+    label: v.string(),
+    latitude: v.number(),
+    longitude: v.number(),
+    radiusMeters: v.number(),
+    createdAt: v.number(),
+  }).index('by_user', ['userId']),
 });

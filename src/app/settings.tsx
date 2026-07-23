@@ -1,19 +1,137 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { useRouter } from 'expo-router';
-import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import { Alert, Linking, Pressable, Share, StyleSheet, Text, View } from 'react-native';
 
 import { Card, Eyebrow, PrimaryButton, Screen } from '@/components/ui/primitives';
+import { getLocalPersistence } from '@/data/local';
+import { redactPointsInZones } from '@/domain/privacy-zones';
+import { LOCAL_SESSION_ID } from '@/domain/tracking-task';
 import { useLocationPermissions } from '@/hooks/use-location-permissions';
 import { useAuthIdentity } from '@/state/auth-context';
+import { convex } from '@/state/convex-client';
+import { useMyXpLedger } from '@/state/data-export-client';
 import { useExplorer } from '@/state/explorer-context';
+import { useMyProfile } from '@/state/profile-client';
+import { useMyPrivateZones } from '@/state/privacy-zones-client';
 import { colors, radii, spacing, typography } from '@/theme/tokens';
 
-const privacyActions = [
-  ['shield-home-outline', 'Soukromé zóny', 'Skryj okolí domova a citlivých míst.'],
-  ['tray-arrow-down', 'Export mých dat', 'Připrav kopii tras, statistik a XP ledgeru.'],
-  ['delete-outline', 'Smazat historii', 'Odstraň jednotlivé trasy nebo celý účet.'],
-] as const;
+type ExportInputs = {
+  profile: ReturnType<typeof useMyProfile>;
+  xpLedger: ReturnType<typeof useMyXpLedger>;
+  zones: ReturnType<typeof useMyPrivateZones>;
+};
+
+async function shareDataExport({ profile, xpLedger, zones }: ExportInputs) {
+  const persistence = await getLocalPersistence();
+  const rawPoints = await persistence.trackPoints.listBySession(LOCAL_SESSION_ID);
+  const redacted = redactPointsInZones(
+    rawPoints.map((point) => ({ latitude: point.latitude, longitude: point.longitude, capturedAt: point.capturedAt })),
+    (zones ?? []).map((zone) => ({ latitude: zone.latitude, longitude: zone.longitude, radiusMeters: zone.radiusMeters })),
+  );
+
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    profile: profile ?? null,
+    xpLedger: xpLedger ?? [],
+    route: redacted,
+    note:
+      zones && zones.length > 0
+        ? `${rawPoints.length - redacted.length} bod(ů) v tvých soukromých zónách bylo z exportu vynecháno.`
+        : undefined,
+  };
+
+  await Share.share({ title: 'TerraQuest — export dat', message: JSON.stringify(payload, null, 2) });
+}
+
+/** Only mounted when `convex` is truthy — these hooks need a ConvexProvider ancestor (see poi-layer.tsx's PoiLayer for the same precondition). */
+function ConnectedExportRow() {
+  const profile = useMyProfile();
+  const xpLedger = useMyXpLedger(200);
+  const zones = useMyPrivateZones();
+  const [exporting, setExporting] = useState(false);
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={async () => {
+        setExporting(true);
+        await shareDataExport({ profile, xpLedger, zones }).catch(() => Alert.alert('Export selhal', 'Zkus to prosím znovu.'));
+        setExporting(false);
+      }}
+      style={styles.action}
+    >
+      <MaterialCommunityIcons color={colors.brand} name="tray-arrow-down" size={24} />
+      <View style={styles.actionCopy}>
+        <Text style={styles.cardTitle}>{exporting ? 'Připravuji export...' : 'Export mých dat'}</Text>
+        <Text style={styles.cardBody}>Trasa, XP ledger a profil jako soubor — body ze soukromých zón se vynechají.</Text>
+      </View>
+      <MaterialCommunityIcons color={colors.textDisabled} name="chevron-right" size={22} />
+    </Pressable>
+  );
+}
+
+function ExportRow() {
+  const [exporting, setExporting] = useState(false);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={async () => {
+        setExporting(true);
+        await shareDataExport({ profile: undefined, xpLedger: undefined, zones: undefined }).catch(() =>
+          Alert.alert('Export selhal', 'Zkus to prosím znovu.'),
+        );
+        setExporting(false);
+      }}
+      style={styles.action}
+    >
+      <MaterialCommunityIcons color={colors.brand} name="tray-arrow-down" size={24} />
+      <View style={styles.actionCopy}>
+        <Text style={styles.cardTitle}>{exporting ? 'Připravuji export...' : 'Export mých dat'}</Text>
+        <Text style={styles.cardBody}>Lokální trasa jako soubor (server není v tomto sestavení připojený).</Text>
+      </View>
+      <MaterialCommunityIcons color={colors.textDisabled} name="chevron-right" size={22} />
+    </Pressable>
+  );
+}
+
+function DeleteHistoryRow() {
+  const { session, resetLocalHistory } = useExplorer();
+
+  const confirmDelete = () => {
+    if (session.active) {
+      Alert.alert('Průzkum právě běží', 'Nejprve dokonči nebo ukonči aktuální výpravu.');
+      return;
+    }
+    Alert.alert(
+      'Smazat historii?',
+      'Smaže se tvá lokální trasa a odkrytá mlha na tomto zařízení. Potvrzené XP a účet zůstanou beze změny.',
+      [
+        { text: 'Zrušit', style: 'cancel' },
+        {
+          text: 'Smazat',
+          style: 'destructive',
+          onPress: async () => {
+            const result = await resetLocalHistory();
+            if (!result.ok) Alert.alert('Nepovedlo se', 'Zkus to prosím znovu.');
+          },
+        },
+      ],
+    );
+  };
+
+  return (
+    <Pressable accessibilityRole="button" onPress={confirmDelete} style={styles.action}>
+      <MaterialCommunityIcons color={colors.brand} name="delete-outline" size={24} />
+      <View style={styles.actionCopy}>
+        <Text style={styles.cardTitle}>Smazat historii</Text>
+        <Text style={styles.cardBody}>Odstraní lokální trasu a mlhu odkrytí na tomto zařízení.</Text>
+      </View>
+      <MaterialCommunityIcons color={colors.textDisabled} name="chevron-right" size={22} />
+    </Pressable>
+  );
+}
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -87,16 +205,17 @@ export default function SettingsScreen() {
         <PrimaryButton label="Povolit průzkum na pozadí" icon="map-marker-path" onPress={requestBackground} tone="surface" />
       ) : null}
 
-      {privacyActions.map(([icon, title, description]) => (
-        <Pressable accessibilityRole="button" key={title} style={styles.action}>
-          <MaterialCommunityIcons color={colors.brand} name={icon} size={24} />
-          <View style={styles.actionCopy}>
-            <Text style={styles.cardTitle}>{title}</Text>
-            <Text style={styles.cardBody}>{description}</Text>
-          </View>
-          <MaterialCommunityIcons color={colors.textDisabled} name="chevron-right" size={22} />
-        </Pressable>
-      ))}
+      <Pressable accessibilityRole="button" onPress={() => router.push('/private-zones')} style={styles.action}>
+        <MaterialCommunityIcons color={colors.brand} name="shield-home-outline" size={24} />
+        <View style={styles.actionCopy}>
+          <Text style={styles.cardTitle}>Soukromé zóny</Text>
+          <Text style={styles.cardBody}>Skryj okolí domova a citlivých míst z exportu dat.</Text>
+        </View>
+        <MaterialCommunityIcons color={colors.textDisabled} name="chevron-right" size={22} />
+      </Pressable>
+
+      {convex ? <ConnectedExportRow /> : <ExportRow />}
+      <DeleteHistoryRow />
 
       <PrimaryButton label="Znovu projít onboarding" icon="restart" onPress={replayOnboarding} tone="surface" />
     </Screen>
