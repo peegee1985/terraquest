@@ -239,6 +239,22 @@ function ProgressContent({ profile }: { profile: MyProfile | null | undefined })
         </Card>
       </Pressable>
 
+      <Pressable accessibilityRole="button" onPress={() => router.push('/level-roadmap')}>
+        <Card style={styles.leaderboardCard}>
+          <MaterialCommunityIcons color={colors.brand} name="map-marker-path" size={24} />
+          <Text style={styles.leaderboardText}>Cesta úrovní — odměny za postup</Text>
+          <MaterialCommunityIcons color={colors.textDisabled} name="chevron-right" size={22} />
+        </Card>
+      </Pressable>
+
+      <Pressable accessibilityRole="button" onPress={() => router.push('/inventory')}>
+        <Card style={styles.leaderboardCard}>
+          <MaterialCommunityIcons color={colors.brand} name="bag-personal-outline" size={24} />
+          <Text style={styles.leaderboardText}>Inventář</Text>
+          <MaterialCommunityIcons color={colors.textDisabled} name="chevron-right" size={22} />
+        </Card>
+      </Pressable>
+
       {convex ? <DailyBonusCard /> : null}
       <StepGoalCard goal={dailyStepGoal} stepGoalStreakDays={profile?.stepGoalCurrentStreakDays ?? null} />
 

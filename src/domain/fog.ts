@@ -91,15 +91,27 @@ function axialToMeters(coord: AxialCoord, size: number): { x: number; y: number 
   };
 }
 
-const NEIGHBOR_OFFSETS: AxialCoord[] = [
-  { q: 0, r: 0 },
-  { q: 1, r: 0 },
-  { q: 1, r: -1 },
-  { q: 0, r: -1 },
-  { q: -1, r: 0 },
-  { q: -1, r: 1 },
-  { q: 0, r: 1 },
-];
+/**
+ * All axial offsets within `radius` hex steps of the origin (a filled
+ * disk, not just the outer ring) — the standard "hex range" formula
+ * (redblobgames.com/grids/hexagons/#range). radius=1 produces the same
+ * 7 offsets (center + 6 neighbors) the old hardcoded NEIGHBOR_OFFSETS
+ * array had — verified by a test asserting set-equality — so every
+ * existing call site (which all default to radius 1) reveals exactly
+ * what it always has. A larger radius is what a radius boost (TQ-122)
+ * actually reveals more of.
+ */
+function hexDiskOffsets(radius: number): AxialCoord[] {
+  const offsets: AxialCoord[] = [];
+  for (let q = -radius; q <= radius; q += 1) {
+    const rMin = Math.max(-radius, -q - radius);
+    const rMax = Math.min(radius, -q + radius);
+    for (let r = rMin; r <= rMax; r += 1) {
+      offsets.push({ q, r });
+    }
+  }
+  return offsets;
+}
 
 function encodeCell(resolution: FogResolution, coord: AxialCoord): string {
   return `${resolution}:${coord.q}:${coord.r}`;
@@ -118,18 +130,27 @@ function cellCenterMeters(cellId: string): { x: number; y: number } {
   return axialToMeters(coord, EDGE_LENGTH_METERS[resolution]);
 }
 
-/** One hex ring around a visited cell — a rough per-ping "you were here" radius. */
-export function cellsRevealedByPoint(point: TrackPoint, resolution: FogResolution = RESOLUTION): string[] {
+/**
+ * A filled hex disk around a visited cell — a rough per-ping "you were
+ * here" radius. `ringRadius` defaults to 1 (the original fixed 7-cell
+ * reveal); a permanent per-level bump or an active radius-boost item
+ * (levelRewardRules.ts / userStats' radius-boost fields) raises it.
+ */
+export function cellsRevealedByPoint(point: TrackPoint, resolution: FogResolution = RESOLUTION, ringRadius = 1): string[] {
   const size = EDGE_LENGTH_METERS[resolution];
   const { x, y } = latLngToMeters(point);
   const center = metersToAxial(x, y, size);
-  return NEIGHBOR_OFFSETS.map((offset) => encodeCell(resolution, { q: center.q + offset.q, r: center.r + offset.r }));
+  return hexDiskOffsets(ringRadius).map((offset) => encodeCell(resolution, { q: center.q + offset.q, r: center.r + offset.r }));
 }
 
-export function cellsRevealedByRoute(route: readonly TrackPoint[], resolution: FogResolution = RESOLUTION): Set<string> {
+export function cellsRevealedByRoute(
+  route: readonly TrackPoint[],
+  resolution: FogResolution = RESOLUTION,
+  ringRadius = 1,
+): Set<string> {
   const cells = new Set<string>();
   for (const point of route) {
-    for (const cell of cellsRevealedByPoint(point, resolution)) cells.add(cell);
+    for (const cell of cellsRevealedByPoint(point, resolution, ringRadius)) cells.add(cell);
   }
   return cells;
 }

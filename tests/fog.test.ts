@@ -59,6 +59,24 @@ describe('cell reveal', () => {
     expect(cells.size).toBeGreaterThan(0);
     expect(new Set(cells).size).toBe(cells.size);
   });
+
+  // TQ-122: the reveal ring became a variable-radius hex disk (radius-boost
+  // items/perks raise it) instead of a hardcoded fixed array — these two
+  // tests pin down that the default (radius 1) is byte-for-byte identical
+  // to the old fixed 7-cell NEIGHBOR_OFFSETS behavior, so every existing
+  // call site (which never passes ringRadius) reveals exactly what it
+  // always has.
+  it('defaults to exactly 7 cells (center + 6 neighbors), matching the original fixed ring', () => {
+    expect(cellsRevealedByPoint(PRAGUE, 11).length).toBe(7);
+  });
+
+  it('a larger ringRadius reveals a strict superset of cells (a filled disk, not a hollow ring)', () => {
+    const radius1 = new Set(cellsRevealedByPoint(PRAGUE, 11, 1));
+    const radius2 = cellsRevealedByPoint(PRAGUE, 11, 2);
+    // Filled-disk formula: 1 + 3N(N+1) cells for radius N.
+    expect(radius2).toHaveLength(19);
+    for (const cell of radius1) expect(radius2).toContain(cell);
+  });
 });
 
 describe('viewport culling', () => {

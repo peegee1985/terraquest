@@ -1,7 +1,13 @@
 import { queryGeneric as query } from 'convex/server';
 import { v } from 'convex/values';
 
-const itemIdValidator = v.union(v.literal('map_theme_token'), v.literal('scanner_pulse'), v.literal('memory_marker'));
+const itemIdValidator = v.union(
+  v.literal('map_theme_token'),
+  v.literal('scanner_pulse'),
+  v.literal('memory_marker'),
+  v.literal('radius_boost_potion'),
+  v.literal('xp_boost_potion'),
+);
 
 /**
  * TQ-30: quantity-stacking grant, insert-or-patch by (userId, itemId).

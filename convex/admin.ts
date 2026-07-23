@@ -26,7 +26,13 @@ async function requireAdmin(ctx: any): Promise<void> {
   }
 }
 
-const itemIdValidator = v.union(v.literal('map_theme_token'), v.literal('scanner_pulse'), v.literal('memory_marker'));
+const itemIdValidator = v.union(
+  v.literal('map_theme_token'),
+  v.literal('scanner_pulse'),
+  v.literal('memory_marker'),
+  v.literal('radius_boost_potion'),
+  v.literal('xp_boost_potion'),
+);
 
 function defaultUserStatsRow(userId: any, now: number, overrides: Record<string, unknown> = {}) {
   return {

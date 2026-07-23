@@ -15,7 +15,7 @@ import {
   type UserSummary,
 } from '../admin-client';
 
-const ITEM_OPTIONS = ['map_theme_token', 'scanner_pulse', 'memory_marker'] as const;
+const ITEM_OPTIONS = ['map_theme_token', 'scanner_pulse', 'memory_marker', 'radius_boost_potion', 'xp_boost_potion'] as const;
 
 function StatusBadge({ status }: { status: UserSummary['status'] }) {
   if (status === 'active') return null;

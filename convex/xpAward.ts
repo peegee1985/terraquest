@@ -1,13 +1,8 @@
+import { isBoostActive } from './boostRules';
 import { grantItem } from './inventory';
+import { levelRewards } from './levelRewardRules';
 import { levelForXp, levelsToClaim, PROGRESSION_VERSION, rankForLevel } from './progressionRules';
 import { capBucketKey, clampToCapBudget, gameDayKey, type XpSourceType } from './xpLedgerRules';
-
-// One Scanner Pulse per level-up — the "Rewards unlocked" panel on the
-// client's level-up celebration screen (see src/app's level-up overlay)
-// needs something real to display, and levelling up previously granted
-// nothing beyond the rank/userLevelClaims row itself.
-const LEVEL_UP_REWARD_ITEM_ID = 'scanner_pulse';
-const LEVEL_UP_REWARD_QUANTITY = 1;
 
 export type AwardXpArgs = {
   userId: any;
@@ -62,10 +57,23 @@ export async function awardXp(ctx: any, args: AwardXpArgs): Promise<AwardXpResul
   const user = await ctx.db.get(args.userId);
   if (!user) throw new Error('awardXp: user not found');
 
+  const statsBeforeAward = await ctx.db
+    .query('userStats')
+    .withIndex('by_user', (q: any) => q.eq('userId', args.userId))
+    .unique();
+
   const dayKey = gameDayKey(args.occurredAt, user.timezone);
   const bucket = capBucketKey(args.sourceType, dayKey);
 
-  let amount = Math.max(0, args.amount);
+  // TQ-122: an active XP Boost Potion (items.ts's useItem) multiplies every
+  // XP award while it hasn't expired — applied before the daily cap clamp
+  // below, so DAILY_BASE_XP_CAP stays a real ceiling in XP terms rather
+  // than something a boost lets a player exceed.
+  const xpBoostMultiplier = isBoostActive(statsBeforeAward?.activeXpBoostExpiresAt, Date.now())
+    ? (statsBeforeAward?.activeXpBoostMultiplier ?? 1)
+    : 1;
+
+  let amount = Math.round(Math.max(0, args.amount) * xpBoostMultiplier);
   if (bucket) {
     const bucketRows = await ctx.db
       .query('xpLedger')
@@ -89,19 +97,18 @@ export async function awardXp(ctx: any, args: AwardXpArgs): Promise<AwardXpResul
     createdAt: now,
   });
 
-  const stats = await ctx.db
-    .query('userStats')
-    .withIndex('by_user', (q: any) => q.eq('userId', args.userId))
-    .unique();
+  const stats = statsBeforeAward;
   const previousLevel = stats?.level ?? 1;
   const newTotalXp = (stats?.totalXp ?? 0) + amount;
   const newLevel = levelForXp(newTotalXp);
   const newRankId = rankForLevel(newLevel).rankId;
 
+  let statsId: any;
   if (stats) {
-    await ctx.db.patch(stats._id, { totalXp: newTotalXp, level: newLevel, rankId: newRankId, updatedAt: now });
+    statsId = stats._id;
+    await ctx.db.patch(statsId, { totalXp: newTotalXp, level: newLevel, rankId: newRankId, updatedAt: now });
   } else {
-    await ctx.db.insert('userStats', {
+    statsId = await ctx.db.insert('userStats', {
       userId: args.userId,
       totalXp: newTotalXp,
       level: newLevel,
@@ -119,7 +126,11 @@ export async function awardXp(ctx: any, args: AwardXpArgs): Promise<AwardXpResul
   // TQ-27: "odemknutí je idempotentní" — a row's existence in
   // userLevelClaims IS the idempotency check, so a level's reward is
   // granted at most once no matter how many times this recompute runs.
+  // TQ-122: levelRewardRules.ts's levelRewards replaces the old single
+  // hardcoded item grant — each claimed level can grant any mix of
+  // consumables and a permanent reveal-ring bump.
   const levelUps: { level: number; rankId: string }[] = [];
+  let permanentRadiusRingBonusGained = 0;
   for (const level of levelsToClaim(previousLevel, newLevel)) {
     const alreadyClaimed = await ctx.db
       .query('userLevelClaims')
@@ -136,11 +147,25 @@ export async function awardXp(ctx: any, args: AwardXpArgs): Promise<AwardXpResul
       claimedAt: now,
     });
     // Safe to call unguarded here (grantItem itself has no dedup check) —
-    // this line only runs once per level thanks to the alreadyClaimed
-    // check above, same reasoning achievements.ts documents for its own
-    // grantItem call.
-    await grantItem(ctx, { userId: args.userId, itemId: LEVEL_UP_REWARD_ITEM_ID, quantity: LEVEL_UP_REWARD_QUANTITY, now });
+    // this loop iteration only runs once per level thanks to the
+    // alreadyClaimed check above, same reasoning achievements.ts documents
+    // for its own grantItem call.
+    for (const reward of levelRewards(level)) {
+      if (reward.kind === 'item') {
+        await grantItem(ctx, { userId: args.userId, itemId: reward.itemId, quantity: reward.quantity, now });
+      } else {
+        permanentRadiusRingBonusGained += reward.ringBonus;
+      }
+    }
     levelUps.push({ level, rankId });
+  }
+
+  if (permanentRadiusRingBonusGained > 0) {
+    const statsRow = await ctx.db.get(statsId);
+    await ctx.db.patch(statsId, {
+      permanentRadiusRingBonus: (statsRow?.permanentRadiusRingBonus ?? 0) + permanentRadiusRingBonusGained,
+      updatedAt: now,
+    });
   }
 
   return { ledgerId, awarded: amount, duplicate: false, levelUps };

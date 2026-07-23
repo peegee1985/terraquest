@@ -120,6 +120,20 @@ export default defineSchema({
     flaggedForReview: v.optional(v.boolean()),
     flagReason: v.optional(v.string()),
     flaggedAt: v.optional(v.number()),
+    // TQ-122: lifetime reveal-ring bonus granted at every rank-tier level
+    // (levelRewardRules.ts's PERMANENT_RADIUS_RING_BONUS_PER_TIER) — never
+    // decreases, stacks with the base ring of 1 and any active temporary
+    // radius boost below.
+    permanentRadiusRingBonus: v.optional(v.number()),
+    // A temporary Radius/XP Boost Potion's active effect — at most one of
+    // each kind active at a time (using another potion of the same kind
+    // while one is active just resets the expiry, see items.ts's useItem).
+    // Expired (now >= expiresAt) is treated identically to absent by every
+    // reader, so nothing needs to eagerly clear these on expiry.
+    activeRadiusBoostExpiresAt: v.optional(v.number()),
+    activeRadiusBoostRingBonus: v.optional(v.number()),
+    activeXpBoostExpiresAt: v.optional(v.number()),
+    activeXpBoostMultiplier: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
@@ -302,15 +316,26 @@ export default defineSchema({
   }).index('by_user_achievement', ['userId', 'achievementId']),
 
   // TQ-30: MVP inventory — one row per (userId, itemId), quantity-stacking.
-  // Deliberately has no field that could ever feed an XP/ranking
-  // computation ("itemy nemění leaderboard" is a structural guarantee, not
-  // just a convention): nothing in this table is ever read by xpAward.ts or
-  // any future leaderboard query. Rest Day Token keeps using userStats's
-  // dedicated restTokens counter from TQ-28 rather than migrating into this
-  // table — that mechanic already ships and works, so it's left alone.
+  // map_theme_token/scanner_pulse/memory_marker are inert collectibles —
+  // sitting in inventory, they never feed an XP/ranking computation
+  // ("itemy nemění leaderboard"). TQ-122's radius_boost_potion/
+  // xp_boost_potion are the one deliberate exception to that: they're
+  // activatable (items.ts's useItem consumes one and writes a temporary
+  // effect into userStats' activeRadiusBoost*/activeXpBoost* fields, which
+  // fog reveal / awardXp DO read) — the guarantee still holds for the
+  // unused item sitting here, it just isn't inert once spent. Rest Day
+  // Token keeps using userStats's dedicated restTokens counter from TQ-28
+  // rather than migrating into this table — that mechanic already ships
+  // and works, so it's left alone.
   userInventoryItems: defineTable({
     userId: v.id('users'),
-    itemId: v.union(v.literal('map_theme_token'), v.literal('scanner_pulse'), v.literal('memory_marker')),
+    itemId: v.union(
+      v.literal('map_theme_token'),
+      v.literal('scanner_pulse'),
+      v.literal('memory_marker'),
+      v.literal('radius_boost_potion'),
+      v.literal('xp_boost_potion'),
+    ),
     quantity: v.number(),
     updatedAt: v.number(),
   }).index('by_user_item', ['userId', 'itemId']),

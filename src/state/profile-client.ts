@@ -20,6 +20,11 @@ export type MyProfile = {
   isVip: boolean;
   xpMultiplier: number;
   planExpiresAt?: number;
+  currentRingRadius: number;
+  permanentRadiusRingBonus: number;
+  activeRadiusBoostExpiresAt?: number;
+  activeXpBoostExpiresAt?: number;
+  activeXpBoostMultiplier?: number;
 };
 
 // Same clientFunctionReference trick as session-sync.ts/poi-client.ts —

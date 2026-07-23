@@ -2,6 +2,7 @@ import { getAuthUserId } from '@convex-dev/auth/server';
 import { mutationGeneric as mutation, queryGeneric as query } from 'convex/server';
 import { v } from 'convex/values';
 
+import { currentRingRadius } from './boostRules';
 import { effectiveXpMultiplier, isVipActive } from './planRules';
 import { DEFAULT_DAILY_STEP_GOAL } from './stepGoalRules';
 
@@ -56,6 +57,16 @@ export const getMyProfile = query({
       isVip: v.boolean(),
       xpMultiplier: v.number(),
       planExpiresAt: v.optional(v.number()),
+      // TQ-122: the ring radius fog reveal should use right now — base (1)
+      // + any permanent per-level bump + an active temporary boost, not
+      // expired. Computed server-side (same "client reads a ready number"
+      // precedent as isVip/xpMultiplier above) so the boost-expiry check
+      // has exactly one implementation (boostRules.ts).
+      currentRingRadius: v.number(),
+      permanentRadiusRingBonus: v.number(),
+      activeRadiusBoostExpiresAt: v.optional(v.number()),
+      activeXpBoostExpiresAt: v.optional(v.number()),
+      activeXpBoostMultiplier: v.optional(v.number()),
     }),
   ),
   handler: async (ctx: any) => {
@@ -88,6 +99,16 @@ export const getMyProfile = query({
       isVip: isVipActive(stats?.plan, stats?.planExpiresAt, now),
       xpMultiplier: effectiveXpMultiplier(stats?.xpMultiplier, stats?.plan, stats?.planExpiresAt, now),
       planExpiresAt: stats?.planExpiresAt,
+      currentRingRadius: currentRingRadius(
+        stats?.permanentRadiusRingBonus,
+        stats?.activeRadiusBoostExpiresAt,
+        stats?.activeRadiusBoostRingBonus,
+        now,
+      ),
+      permanentRadiusRingBonus: stats?.permanentRadiusRingBonus ?? 0,
+      activeRadiusBoostExpiresAt: stats?.activeRadiusBoostExpiresAt,
+      activeXpBoostExpiresAt: stats?.activeXpBoostExpiresAt,
+      activeXpBoostMultiplier: stats?.activeXpBoostMultiplier,
     };
   },
 });

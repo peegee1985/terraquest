@@ -17,6 +17,7 @@ import {
   type TrackingProfile,
 } from '@/domain/tracking-task';
 import { convex } from '@/state/convex-client';
+import { useMyProfile } from '@/state/profile-client';
 import {
   convexSessionSyncTransport,
   NOT_YET_CONFIGURED_TRANSPORT,
@@ -25,6 +26,23 @@ import {
   sessionSyncEventId,
   type SessionSyncPayload,
 } from '@/state/session-sync';
+
+/**
+ * TQ-122: reports the live reveal-ring radius (base + permanent level bump
+ * + active temporary boost) up to ExplorerProvider via a ref rather than
+ * context state, so a boost expiring mid-session doesn't need to re-run
+ * the reveal effect below — only ever mounted when `convex` is truthy
+ * (useMyProfile's useQuery needs a ConvexProvider ancestor, same
+ * precondition as every other useMyProfile call site) since ExplorerProvider
+ * itself mounts unconditionally, unlike the screens that already guard this.
+ */
+function RingRadiusWatcher({ onChange }: { onChange: (ringRadius: number) => void }) {
+  const profile = useMyProfile();
+  useEffect(() => {
+    onChange(profile?.currentRingRadius ?? 1);
+  }, [profile, onChange]);
+  return null;
+}
 
 type SessionState = {
   active: boolean;
@@ -96,6 +114,13 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
   // finished within that (sub-second) window just reports 0 new units,
   // an acceptable rare edge case rather than blocking session start on it.
   const normalizedCountAtStartRef = useRef<number | null>(null);
+  // TQ-122: read fresh on every 1.5s reveal poll (not just captured once
+  // when the reveal effect starts) so a radius boost activating or
+  // expiring mid-session takes effect immediately.
+  const ringRadiusRef = useRef(1);
+  const handleRingRadiusChange = useCallback((ringRadius: number) => {
+    ringRadiusRef.current = ringRadius;
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -258,7 +283,7 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
       // the fog reveal "within 2 seconds" instead of only after finishing.
       const seenAt = Date.now();
       const modeBit = movementModeBit(mode);
-      const visualCells = cellsRevealedByRoute(route);
+      const visualCells = cellsRevealedByRoute(route, undefined, ringRadiusRef.current);
       const normalizedCells = mode === 'walk' || mode === 'run' ? centerlineCellsForRoute(route) : new Set<string>();
       await Promise.all(
         Array.from(visualCells).map((h3Index) =>
@@ -446,7 +471,12 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
     [finishSession, hasCompletedSession, resetLocalHistory, revealedCells, session, snapshot, startSession, togglePause],
   );
 
-  return <ExplorerContext.Provider value={value}>{children}</ExplorerContext.Provider>;
+  return (
+    <ExplorerContext.Provider value={value}>
+      {convex ? <RingRadiusWatcher onChange={handleRingRadiusChange} /> : null}
+      {children}
+    </ExplorerContext.Provider>
+  );
 }
 
 export function useExplorer() {
