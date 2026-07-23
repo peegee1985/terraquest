@@ -53,6 +53,14 @@ export default defineSchema({
     visualAreaSquareMeters: v.number(),
     currentStreakDays: v.number(),
     longestStreakDays: v.number(),
+    // TQ-28: the day this user last qualified for a streak day — the
+    // idempotency guard against recording the same day twice, and the
+    // anchor recordQualifyingDay compares a new day against.
+    lastQualifiedDayKey: v.optional(v.string()),
+    // TQ-28: minimal counter for the Rest Day Token mechanic (docs "Itemy
+    // MVP"); a full generic inventory system is TQ-30's job, but the
+    // streak logic needs *some* token count to bridge a missed day.
+    restTokens: v.optional(v.number()),
     updatedAt: v.number(),
   }).index('by_user', ['userId']),
 
@@ -115,6 +123,11 @@ export default defineSchema({
     userId: v.id('users'),
     definitionId: v.string(),
     periodKey: v.string(),
+    // TQ-28: denormalized from the quest definition at assignment time so
+    // progress-recording can dispatch on metric without re-deriving it
+    // from definitionId string parsing.
+    category: v.union(v.literal('movement'), v.literal('exploration'), v.literal('discovery')),
+    metric: v.union(v.literal('steps'), v.literal('distance_m'), v.literal('new_units'), v.literal('active_minutes')),
     target: v.number(),
     progress: v.number(),
     rewardXp: v.number(),
