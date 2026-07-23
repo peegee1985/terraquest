@@ -101,6 +101,17 @@ export function createTrackPointRepository(db: LocalDb, masterKeyBase64: string,
       await db.run('DELETE FROM local_track_point WHERE session_id = ?;', [sessionId]);
     },
 
+    /**
+     * TQ-24: retention only for points captured at/before a confirmed
+     * session's end time — never the blunter deleteBySession. sessionId is
+     * a single slot reused across expeditions (see tracking-task.ts), so a
+     * still-unconfirmed newer session's points (captured_at strictly after
+     * this cutoff) are always safe from a late confirmation of an older one.
+     */
+    async deleteCapturedUpTo(sessionId: string, cutoffCapturedAt: number): Promise<void> {
+      await db.run('DELETE FROM local_track_point WHERE session_id = ? AND captured_at <= ?;', [sessionId, cutoffCapturedAt]);
+    },
+
     /** Keeps only the most recent `limit` points for a session, oldest first dropped. */
     async pruneToLast(sessionId: string, limit: number): Promise<void> {
       await db.run(

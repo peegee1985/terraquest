@@ -7,6 +7,13 @@ import { filterRoute } from '@/domain/gps-filter';
 import { classifyMovement, computeRollingSpeedMps, movementModeBit } from '@/domain/movement';
 import { MovementMode, Quest, TrackPoint } from '@/domain/types';
 import { LOCAL_SESSION_ID, startLocationTracking, stopLocationTracking } from '@/domain/tracking-task';
+import {
+  NOT_YET_CONFIGURED_TRANSPORT,
+  processDueSyncEvents,
+  SESSION_SYNC_EVENT_TYPE,
+  sessionSyncEventId,
+  type SessionSyncPayload,
+} from '@/state/session-sync';
 
 type SessionState = {
   active: boolean;
@@ -36,6 +43,10 @@ const MAX_ROUTE_POINTS = 500;
 // acceptance criterion is what pulls this under 2000ms — it's just a local
 // SQLite read, decoupled from the location task's own 5s GPS sampling rate.
 const ROUTE_REFRESH_INTERVAL_MS = 1500;
+// TQ-24: independent of whether a session is active — a finished session
+// can still be waiting on outbox confirmation while the user browses
+// elsewhere in the app, or the app could've been relaunched since finishing.
+const SYNC_POLL_INTERVAL_MS = 30_000;
 const EXTRA_SNAPSHOT_PREFERENCE_KEY = 'explorer.snapshot.extra.v1';
 // TQ-20: background location must not be offered until the user has
 // actually finished an expedition once — this flag gates that in Settings.
@@ -149,6 +160,27 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
       .catch(() => undefined);
   }, [hydrated, snapshot]);
 
+  // TQ-24: retries the outbox with backoff regardless of whether a session
+  // is currently active — a finished session can be sitting in 'processing'
+  // (awaiting confirmation) at any time, including right after an app
+  // restart. NOT_YET_CONFIGURED_TRANSPORT means nothing confirms yet today
+  // (no live Convex mutation client — same blocker as TQ-18/19), so this
+  // safely keeps retrying rather than dropping or faking success.
+  useEffect(() => {
+    if (!hydrated) return;
+    const run = () => {
+      const persistence = persistenceRef.current;
+      if (!persistence) return;
+      processDueSyncEvents(
+        { outbox: persistence.outbox, trackPoints: persistence.trackPoints, session: persistence.session, transport: NOT_YET_CONFIGURED_TRANSPORT },
+        Date.now(),
+      ).catch(() => undefined);
+    };
+    const interval = setInterval(run, SYNC_POLL_INTERVAL_MS);
+    run();
+    return () => clearInterval(interval);
+  }, [hydrated]);
+
   useEffect(() => {
     if (!session.active || session.paused) return;
     const interval = setInterval(() => {
@@ -217,14 +249,14 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
     };
   }, [session.active, session.paused]);
 
-  const persistSession = useCallback((next: SessionState, status: 'active' | 'paused' | 'completed') => {
+  const persistSession = useCallback((next: SessionState, status: 'active' | 'paused' | 'processing' | 'completed') => {
     persistenceRef.current?.session
       .upsert({
         id: LOCAL_SESSION_ID,
         status,
         mode: next.mode,
         started_at: next.startedAt,
-        ended_at: status === 'completed' ? Date.now() : null,
+        ended_at: status === 'processing' || status === 'completed' ? Date.now() : null,
         elapsed_seconds: next.elapsedSeconds,
         distance_m: 0,
         new_cells: 0,
@@ -260,9 +292,31 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
 
   const finishSession = useCallback(() => {
     setSession((current) => {
-      const next = { ...current, active: false, paused: false, startedAt: null };
-      persistSession(next, 'completed');
-      return next;
+      const endedAt = Date.now();
+      // TQ-24: 'processing', not 'completed' yet — the session only becomes
+      // 'completed' once its outbox sync event is actually confirmed (see
+      // session-sync.ts). Persisted with the real startedAt (not nulled)
+      // so a later confirmation can match it against a stale one.
+      persistSession({ ...current, active: false, paused: false }, 'processing');
+
+      const payload: SessionSyncPayload = {
+        sessionId: LOCAL_SESSION_ID,
+        startedAt: current.startedAt,
+        endedAt,
+        mode: current.mode,
+        elapsedSeconds: current.elapsedSeconds,
+        pointCount: nextSequenceRef.current,
+      };
+      persistenceRef.current?.outbox
+        .enqueue({
+          eventId: sessionSyncEventId(LOCAL_SESSION_ID, current.startedAt),
+          type: SESSION_SYNC_EVENT_TYPE,
+          payload,
+          createdAt: endedAt,
+        })
+        .catch(() => undefined);
+
+      return { ...current, active: false, paused: false, startedAt: null };
     });
     stopLocationTracking().catch(() => undefined);
     setHasCompletedSession(true);

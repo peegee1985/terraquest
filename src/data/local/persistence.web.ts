@@ -78,6 +78,14 @@ function createInMemoryPersistence(): LocalPersistence {
       async deleteBySession(sessionId) {
         trackPointsBySession.delete(sessionId);
       },
+      async deleteCapturedUpTo(sessionId, cutoffCapturedAt) {
+        const existing = trackPointsBySession.get(sessionId);
+        if (!existing) return;
+        trackPointsBySession.set(
+          sessionId,
+          existing.filter((point) => point.capturedAt > cutoffCapturedAt),
+        );
+      },
       async pruneToLast(sessionId, limit) {
         const existing = trackPointsBySession.get(sessionId);
         if (!existing) return;
