@@ -16,7 +16,13 @@ export const colors = {
   danger: '#FF5D66',
   warning: '#FFC857',
   outline: '#294153',
-  fog: 'rgba(5, 11, 16, 0.84)',
+  // Deliberately a mid grey, not a near-black shade — the basemap tiles
+  // (CARTO dark_all, see explorer-map.native.tsx) and colors.background are
+  // both already near-black, so a dark fog color used to blend into them
+  // almost invisibly, making unlocked (revealed) areas hard to tell apart
+  // from still-fogged ones. High opacity keeps it reading as solid grey
+  // rather than washing back toward black once blended over the map tile.
+  fog: 'rgba(112, 124, 138, 0.92)',
   brandSoft: 'rgba(56, 230, 138, 0.14)',
   amberSoft: 'rgba(255, 184, 77, 0.14)',
   blueSoft: 'rgba(76, 184, 255, 0.14)',
