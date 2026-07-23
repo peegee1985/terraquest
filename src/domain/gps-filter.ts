@@ -63,3 +63,12 @@ export function filterRoute(points: TrackPoint[], options: GpsFilterOptions = DE
   }
   return accepted;
 }
+
+/** TQ-31: total distance of an already-filtered route — sum of consecutive-point haversine distances. Callers are expected to pass a filterRoute()-ed route so a single teleport/jump point can't inflate the total. */
+export function routeDistanceMeters(route: readonly TrackPoint[]): number {
+  let total = 0;
+  for (let i = 1; i < route.length; i += 1) {
+    total += distanceMeters(route[i - 1], route[i]);
+  }
+  return total;
+}

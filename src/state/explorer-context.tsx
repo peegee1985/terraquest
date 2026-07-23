@@ -2,8 +2,9 @@ import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, 
 
 import { demoQuests, demoRoute, demoSnapshot } from '@/data/demo';
 import { getLocalPersistence, type LocalPersistence } from '@/data/local';
+import { distanceXp, explorationXp } from '@/domain/progression';
 import { cellsRevealedByRoute, centerlineCellsForRoute } from '@/domain/fog';
-import { filterRoute } from '@/domain/gps-filter';
+import { filterRoute, routeDistanceMeters } from '@/domain/gps-filter';
 import { classifyMovement, computeRollingSpeedMps, movementModeBit } from '@/domain/movement';
 import { MovementMode, Quest, TrackPoint } from '@/domain/types';
 import {
@@ -14,7 +15,9 @@ import {
   updateLocationTrackingProfile,
   type TrackingProfile,
 } from '@/domain/tracking-task';
+import { convex } from '@/state/convex-client';
 import {
+  convexSessionSyncTransport,
   NOT_YET_CONFIGURED_TRANSPORT,
   processDueSyncEvents,
   SESSION_SYNC_EVENT_TYPE,
@@ -87,6 +90,13 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
   // refresh poll only calls updateLocationTrackingProfile on an actual
   // change, not every 1.5s tick.
   const trackingProfileRef = useRef<TrackingProfile>('precise');
+  // TQ-31: normalizedForXp cell count at session start, so finishSession can
+  // diff against the count at session end to get "new exploration units
+  // THIS session" — countNormalizedForXp() itself is a lifetime total, not
+  // a per-session figure. null until the async count resolves; a session
+  // finished within that (sub-second) window just reports 0 new units,
+  // an acceptable rare edge case rather than blocking session start on it.
+  const normalizedCountAtStartRef = useRef<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -172,26 +182,37 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
       .catch(() => undefined);
   }, [hydrated, snapshot]);
 
-  // TQ-24: retries the outbox with backoff regardless of whether a session
-  // is currently active — a finished session can be sitting in 'processing'
-  // (awaiting confirmation) at any time, including right after an app
-  // restart. NOT_YET_CONFIGURED_TRANSPORT means nothing confirms yet today
-  // (no live Convex mutation client — same blocker as TQ-18/19), so this
-  // safely keeps retrying rather than dropping or faking success.
+  // TQ-24/TQ-31: retries the outbox with backoff regardless of whether a
+  // session is currently active — a finished session can be sitting in
+  // 'processing' (awaiting confirmation) at any time, including right after
+  // an app restart. Uses the real Convex transport when a client is
+  // configured (EXPO_PUBLIC_CONVEX_URL set); falls back to
+  // NOT_YET_CONFIGURED_TRANSPORT otherwise, same graceful-degradation
+  // pattern as _layout.tsx's BackendProvider.
+  const syncTransport = useMemo(
+    () => (convex ? convexSessionSyncTransport(convex) : NOT_YET_CONFIGURED_TRANSPORT),
+    [],
+  );
   useEffect(() => {
     if (!hydrated) return;
     const run = () => {
       const persistence = persistenceRef.current;
       if (!persistence) return;
       processDueSyncEvents(
-        { outbox: persistence.outbox, trackPoints: persistence.trackPoints, session: persistence.session, transport: NOT_YET_CONFIGURED_TRANSPORT },
+        {
+          outbox: persistence.outbox,
+          trackPoints: persistence.trackPoints,
+          session: persistence.session,
+          xpProjection: persistence.xpProjection,
+          transport: syncTransport,
+        },
         Date.now(),
       ).catch(() => undefined);
     };
     const interval = setInterval(run, SYNC_POLL_INTERVAL_MS);
     run();
     return () => clearInterval(interval);
-  }, [hydrated]);
+  }, [hydrated, syncTransport]);
 
   useEffect(() => {
     if (!session.active || session.paused) return;
@@ -292,6 +313,13 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
     (mode: MovementMode = 'walk') => {
       modeRef.current = mode;
       trackingProfileRef.current = trackingProfileForMode(mode);
+      normalizedCountAtStartRef.current = null;
+      persistenceRef.current?.exploredCells
+        .countNormalizedForXp()
+        .then((count) => {
+          normalizedCountAtStartRef.current = count;
+        })
+        .catch(() => undefined);
       setSession((current) => {
         const next: SessionState = { ...current, active: true, paused: false, mode, startedAt: Date.now(), elapsedSeconds: 0 };
         persistSession(next, 'active');
@@ -321,22 +349,70 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
       // so a later confirmation can match it against a stale one.
       persistSession({ ...current, active: false, paused: false }, 'processing');
 
-      const payload: SessionSyncPayload = {
-        sessionId: LOCAL_SESSION_ID,
-        startedAt: current.startedAt,
-        endedAt,
-        mode: current.mode,
-        elapsedSeconds: current.elapsedSeconds,
-        pointCount: nextSequenceRef.current,
-      };
-      persistenceRef.current?.outbox
-        .enqueue({
-          eventId: sessionSyncEventId(LOCAL_SESSION_ID, current.startedAt),
+      const startedAt = current.startedAt;
+      const mode = current.mode;
+      const elapsedSeconds = current.elapsedSeconds;
+      const normalizedCountAtStart = normalizedCountAtStartRef.current ?? 0;
+
+      // TQ-31: computing real distance/exploration numbers needs the full
+      // captured-point history (not just the display-capped in-memory
+      // route) and a fresh cell count — both async, so this runs as a
+      // fire-and-forget continuation of the synchronous state update above,
+      // same style as the other side effects in this callback.
+      void (async () => {
+        const persistence = persistenceRef.current;
+        if (!persistence) return;
+
+        const rawPoints = await persistence.trackPoints.listBySession(LOCAL_SESSION_ID);
+        const filtered = filterRoute(
+          rawPoints.map((point) => ({
+            latitude: point.latitude,
+            longitude: point.longitude,
+            accuracy: point.accuracy ?? null,
+            timestamp: point.capturedAt,
+          })),
+        );
+        const distanceMeters = routeDistanceMeters(filtered);
+        const normalizedCountAtEnd = await persistence.exploredCells.countNormalizedForXp();
+        const newExplorationUnitsCount = Math.max(0, normalizedCountAtEnd - normalizedCountAtStart);
+
+        // Optimistic local estimate, shown immediately — replaced by the
+        // server's authoritative confirmedXp once the sync transport
+        // confirms (session-sync.ts's processDueSyncEvents).
+        const estimatedXp = distanceXp(distanceMeters, mode) + explorationXp(newExplorationUnitsCount, mode);
+        await persistence.xpProjection.addPending(estimatedXp, endedAt);
+
+        // TQ-31: the session-summary screen reads these back straight from
+        // the session row (distance_m/new_cells/xp_pending existed since
+        // TQ-24 but were always hardcoded to 0 — this is the first write of
+        // their real values).
+        const sessionRow = await persistence.session.getById(LOCAL_SESSION_ID);
+        if (sessionRow) {
+          await persistence.session.upsert({
+            ...sessionRow,
+            distance_m: distanceMeters,
+            new_cells: newExplorationUnitsCount,
+            xp_pending: estimatedXp,
+          });
+        }
+
+        const payload: SessionSyncPayload = {
+          sessionId: LOCAL_SESSION_ID,
+          startedAt,
+          endedAt,
+          mode,
+          elapsedSeconds,
+          pointCount: nextSequenceRef.current,
+          distanceMeters,
+          newExplorationUnitsCount,
+        };
+        await persistence.outbox.enqueue({
+          eventId: sessionSyncEventId(LOCAL_SESSION_ID, startedAt),
           type: SESSION_SYNC_EVENT_TYPE,
           payload,
           createdAt: endedAt,
-        })
-        .catch(() => undefined);
+        });
+      })();
 
       return { ...current, active: false, paused: false, startedAt: null };
     });

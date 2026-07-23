@@ -5,10 +5,17 @@
  * as a plain function, not a mutation, so callers (discoverPoi, claimQuest)
  * run it inside their own transaction — same pattern as awardXp.
  */
+export type UserStatsCounterField =
+  | 'poiDiscoveriesCount'
+  | 'dailyQuestsClaimedCount'
+  | 'weeklyQuestsClaimedCount'
+  | 'verifiedDistanceMeters'
+  | 'explorationUnits';
+
 export async function bumpUserStatsCounter(
   ctx: any,
   userId: any,
-  field: 'poiDiscoveriesCount' | 'dailyQuestsClaimedCount' | 'weeklyQuestsClaimedCount',
+  field: UserStatsCounterField,
   amount: number,
   now: number,
 ): Promise<void> {

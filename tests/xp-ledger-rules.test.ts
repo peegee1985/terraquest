@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { capBucketKey, clampToCapBudget, DAILY_BASE_XP_CAP, gameDayKey } from '../convex/xpLedgerRules';
+import {
+  capBucketKey,
+  clampToCapBudget,
+  DAILY_BASE_XP_CAP,
+  distanceXp,
+  explorationXp,
+  gameDayKey,
+  sessionQualifiesForStreak,
+} from '../convex/xpLedgerRules';
 
 describe('gameDayKey', () => {
   it('formats a timestamp as a sortable YYYY-MM-DD day key in the given timezone', () => {
@@ -45,5 +53,60 @@ describe('clampToCapBudget', () => {
 
   it('never awards a negative amount even for a negative proposal', () => {
     expect(clampToCapBudget(-50, 0)).toBe(0);
+  });
+});
+
+describe('distanceXp', () => {
+  it('awards 5 XP per 100m at full rate for walk/run', () => {
+    expect(distanceXp(1000, 'walk')).toBe(50);
+    expect(distanceXp(1000, 'run')).toBe(50);
+  });
+
+  it('floors partial 100m segments', () => {
+    expect(distanceXp(1049, 'walk')).toBe(50);
+  });
+
+  it('applies the 0.35x bike multiplier', () => {
+    expect(distanceXp(1000, 'bike')).toBe(Math.floor(50 * 0.35));
+  });
+
+  it('awards zero for auto/vehicle', () => {
+    expect(distanceXp(10_000, 'auto')).toBe(0);
+  });
+
+  it('never goes negative for a negative distance', () => {
+    expect(distanceXp(-500, 'walk')).toBe(0);
+  });
+});
+
+describe('explorationXp', () => {
+  it('awards 3 XP per new unit for walk/run, capped at 600', () => {
+    expect(explorationXp(10, 'walk')).toBe(30);
+    expect(explorationXp(1000, 'run')).toBe(600);
+  });
+
+  it('awards zero for bike/auto regardless of unit count', () => {
+    expect(explorationXp(50, 'bike')).toBe(0);
+    expect(explorationXp(50, 'auto')).toBe(0);
+  });
+});
+
+describe('sessionQualifiesForStreak', () => {
+  it('qualifies a 20+ minute walk/run regardless of distance', () => {
+    expect(sessionQualifiesForStreak('walk', 20 * 60, 0)).toBe(true);
+    expect(sessionQualifiesForStreak('run', 25 * 60, 0)).toBe(true);
+  });
+
+  it('qualifies a 1km+ walk/run regardless of duration', () => {
+    expect(sessionQualifiesForStreak('walk', 60, 1000)).toBe(true);
+  });
+
+  it('does not qualify a short, short-distance walk/run', () => {
+    expect(sessionQualifiesForStreak('walk', 300, 200)).toBe(false);
+  });
+
+  it('never qualifies bike/auto regardless of duration or distance', () => {
+    expect(sessionQualifiesForStreak('bike', 3600, 50_000)).toBe(false);
+    expect(sessionQualifiesForStreak('auto', 3600, 50_000)).toBe(false);
   });
 });

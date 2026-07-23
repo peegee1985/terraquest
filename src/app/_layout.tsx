@@ -1,10 +1,10 @@
-import { ConvexReactClient } from 'convex/react';
 import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { ReactNode, useEffect } from 'react';
 
 import { AppErrorBoundary } from '@/components/app-error-boundary';
 import { AuthProvider } from '@/state/auth-context';
+import { convex } from '@/state/convex-client';
 import { ExplorerProvider } from '@/state/explorer-context';
 import { colors } from '@/theme/tokens';
 
@@ -15,9 +15,6 @@ import { colors } from '@/theme/tokens';
 import '@/domain/tracking-task';
 
 SplashScreen.preventAutoHideAsync();
-
-const convexUrl = process.env.EXPO_PUBLIC_CONVEX_URL;
-const convex = convexUrl ? new ConvexReactClient(convexUrl) : null;
 
 const navigationTheme = {
   ...DarkTheme,

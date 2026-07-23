@@ -187,85 +187,96 @@ export const claimQuest = mutation({
  * client-supplied "today". Idempotent for the same day; bridges exactly
  * one missed day with a Rest Day Token if available; anything more resets
  * the streak. Awards any streak-milestone XP through the same awardXp path.
+ *
+ * TQ-31: extracted to a plain function (same pattern as xpAward.ts's
+ * awardXp) so sessions.ts's submitTrackingSession can call it directly
+ * within its own transaction — a qualifying session should record its
+ * streak day in the same atomic commit as its distance/exploration XP,
+ * not via a separate mutation call.
  */
+export async function applyRecordQualifyingDay(
+  ctx: any,
+  args: { userId: any; now: number },
+): Promise<{ currentStreakDays: number; streakChanged: boolean; restTokenConsumed: boolean }> {
+  const user = await ctx.db.get(args.userId);
+  if (!user) throw new Error('recordQualifyingDay: user not found');
+
+  const dayKey = gameDayKey(args.now, user.timezone);
+  const stats = await ctx.db
+    .query('userStats')
+    .withIndex('by_user', (q: any) => q.eq('userId', args.userId))
+    .unique();
+
+  const state: StreakState = {
+    currentStreakDays: stats?.currentStreakDays ?? 0,
+    longestStreakDays: stats?.longestStreakDays ?? 0,
+    lastQualifiedDayKey: stats?.lastQualifiedDayKey ?? null,
+    restTokens: stats?.restTokens ?? 0,
+  };
+  const result = applyQualifyingDay(state, dayKey);
+
+  if (result.streakChanged) {
+    if (stats) {
+      await ctx.db.patch(stats._id, {
+        currentStreakDays: result.next.currentStreakDays,
+        longestStreakDays: result.next.longestStreakDays,
+        lastQualifiedDayKey: result.next.lastQualifiedDayKey,
+        restTokens: result.next.restTokens,
+        updatedAt: args.now,
+      });
+    } else {
+      // Brand new user's first-ever qualifying day — no userStats row
+      // yet (awardXp normally creates one on first XP, but a streak day
+      // can be recorded before any XP event does).
+      await ctx.db.insert('userStats', {
+        userId: args.userId,
+        totalXp: 0,
+        level: 1,
+        rankId: 'tulak',
+        verifiedSteps: 0,
+        verifiedDistanceMeters: 0,
+        explorationUnits: 0,
+        visualAreaSquareMeters: 0,
+        currentStreakDays: result.next.currentStreakDays,
+        longestStreakDays: result.next.longestStreakDays,
+        lastQualifiedDayKey: result.next.lastQualifiedDayKey,
+        restTokens: result.next.restTokens,
+        updatedAt: args.now,
+      });
+    }
+
+    const milestone = streakMilestoneReward(result.next.currentStreakDays);
+    if (milestone) {
+      await awardXp(ctx, {
+        userId: args.userId,
+        eventId: `streak-milestone:${args.userId}:${dayKey}:${result.next.currentStreakDays}`,
+        sourceType: 'streak',
+        sourceId: `streak:${result.next.currentStreakDays}`,
+        amount: milestone.xp,
+        reasonCode: 'streak_milestone',
+        rulesVersion: PROGRESSION_VERSION,
+        occurredAt: args.now,
+      });
+    }
+
+    // TQ-30: longestStreakDays just changed above, so this is the moment
+    // a streak-tier achievement (streak_3/7/14/30/100) can newly unlock —
+    // the achievement system now owns "grant a badge at day 30" generically
+    // rather than questRules.ts's old one-off `badge` field.
+    await checkAndGrantAchievements(ctx, { userId: args.userId, occurredAt: args.now });
+  }
+
+  return {
+    currentStreakDays: result.next.currentStreakDays,
+    streakChanged: result.streakChanged,
+    restTokenConsumed: result.restTokenConsumed,
+  };
+}
+
 export const recordQualifyingDay = mutation({
   args: { userId: v.id('users'), now: v.number() },
   returns: v.object({ currentStreakDays: v.number(), streakChanged: v.boolean(), restTokenConsumed: v.boolean() }),
-  handler: async (ctx: any, args: any) => {
-    const user = await ctx.db.get(args.userId);
-    if (!user) throw new Error('recordQualifyingDay: user not found');
-
-    const dayKey = gameDayKey(args.now, user.timezone);
-    const stats = await ctx.db
-      .query('userStats')
-      .withIndex('by_user', (q: any) => q.eq('userId', args.userId))
-      .unique();
-
-    const state: StreakState = {
-      currentStreakDays: stats?.currentStreakDays ?? 0,
-      longestStreakDays: stats?.longestStreakDays ?? 0,
-      lastQualifiedDayKey: stats?.lastQualifiedDayKey ?? null,
-      restTokens: stats?.restTokens ?? 0,
-    };
-    const result = applyQualifyingDay(state, dayKey);
-
-    if (result.streakChanged) {
-      if (stats) {
-        await ctx.db.patch(stats._id, {
-          currentStreakDays: result.next.currentStreakDays,
-          longestStreakDays: result.next.longestStreakDays,
-          lastQualifiedDayKey: result.next.lastQualifiedDayKey,
-          restTokens: result.next.restTokens,
-          updatedAt: args.now,
-        });
-      } else {
-        // Brand new user's first-ever qualifying day — no userStats row
-        // yet (awardXp normally creates one on first XP, but a streak day
-        // can be recorded before any XP event does).
-        await ctx.db.insert('userStats', {
-          userId: args.userId,
-          totalXp: 0,
-          level: 1,
-          rankId: 'tulak',
-          verifiedSteps: 0,
-          verifiedDistanceMeters: 0,
-          explorationUnits: 0,
-          visualAreaSquareMeters: 0,
-          currentStreakDays: result.next.currentStreakDays,
-          longestStreakDays: result.next.longestStreakDays,
-          lastQualifiedDayKey: result.next.lastQualifiedDayKey,
-          restTokens: result.next.restTokens,
-          updatedAt: args.now,
-        });
-      }
-
-      const milestone = streakMilestoneReward(result.next.currentStreakDays);
-      if (milestone) {
-        await awardXp(ctx, {
-          userId: args.userId,
-          eventId: `streak-milestone:${args.userId}:${dayKey}:${result.next.currentStreakDays}`,
-          sourceType: 'streak',
-          sourceId: `streak:${result.next.currentStreakDays}`,
-          amount: milestone.xp,
-          reasonCode: 'streak_milestone',
-          rulesVersion: PROGRESSION_VERSION,
-          occurredAt: args.now,
-        });
-      }
-
-      // TQ-30: longestStreakDays just changed above, so this is the moment
-      // a streak-tier achievement (streak_3/7/14/30/100) can newly unlock —
-      // the achievement system now owns "grant a badge at day 30" generically
-      // rather than questRules.ts's old one-off `badge` field.
-      await checkAndGrantAchievements(ctx, { userId: args.userId, occurredAt: args.now });
-    }
-
-    return {
-      currentStreakDays: result.next.currentStreakDays,
-      streakChanged: result.streakChanged,
-      restTokenConsumed: result.restTokenConsumed,
-    };
-  },
+  handler: async (ctx: any, args: any) => applyRecordQualifyingDay(ctx, args),
 });
 
 /** Read-only view of a user's currently active/completed quests for a given period. */

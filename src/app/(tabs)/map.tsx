@@ -1,5 +1,6 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import * as Haptics from 'expo-haptics';
+import { useRouter } from 'expo-router';
 import { Alert, SafeAreaView, StyleSheet, Text, View } from 'react-native';
 
 import { ExplorerMap } from '../../components/map/explorer-map';
@@ -16,6 +17,7 @@ function formatDuration(seconds: number) {
 }
 
 export default function MapScreen() {
+  const router = useRouter();
   const { session, revealedCells, startSession, togglePause, finishSession } = useExplorer();
   const { isForegroundDenied, requestForeground } = useLocationPermissions();
 
@@ -40,6 +42,11 @@ export default function MapScreen() {
     }
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
     startSession('walk');
+  };
+
+  const handleFinish = () => {
+    finishSession();
+    router.push('/session-summary');
   };
 
   return (
@@ -78,7 +85,7 @@ export default function MapScreen() {
                 <PrimaryButton icon={session.paused ? 'play' : 'pause'} label={session.paused ? 'Pokračovat' : 'Pauza'} onPress={togglePause} tone="surface" />
               </View>
               <View style={styles.actionHalf}>
-                <PrimaryButton icon="flag-checkered" label="Dokončit" onPress={finishSession} tone="danger" />
+                <PrimaryButton icon="flag-checkered" label="Dokončit" onPress={handleFinish} tone="danger" />
               </View>
             </View>
           </View>

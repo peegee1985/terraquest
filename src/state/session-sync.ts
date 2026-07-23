@@ -1,7 +1,11 @@
+import { anyApi } from 'convex/server';
+import type { ConvexReactClient } from 'convex/react';
+
 import { computeRetryDelayMs, DEFAULT_SYNC_RETRY_OPTIONS, hasExceededRetryBudget, type SyncRetryOptions } from '../domain/sync';
 import type { OutboxRepository } from '../data/local/repositories/outbox';
 import type { SessionRepository } from '../data/local/repositories/session';
 import type { TrackPointRepository } from '../data/local/repositories/track-points';
+import type { XpProjectionRepository } from '../data/local/repositories/xp-projection';
 import type { MovementMode } from '../domain/types';
 
 export const SESSION_SYNC_EVENT_TYPE = 'session_sync';
@@ -13,9 +17,15 @@ export type SessionSyncPayload = {
   mode: MovementMode;
   elapsedSeconds: number;
   pointCount: number;
+  // TQ-31: raw, already-locally-validated evidence (gps-filter.ts's
+  // teleport/accuracy rejection, fog.ts's mode-gated centerline cells) —
+  // the server recomputes the actual XP amount from these, never trusts a
+  // number computed here.
+  distanceMeters: number;
+  newExplorationUnitsCount: number;
 };
 
-export type SyncResult = { ok: true } | { ok: false; errorClass: string };
+export type SyncResult = { ok: true; confirmedXp?: number } | { ok: false; errorClass: string };
 export type SyncTransport = (payload: SessionSyncPayload) => Promise<SyncResult>;
 
 /** A session can reuse the same slot across expeditions (see tracking-task.ts), so the event id must key off the specific start time, not just the slot. */
@@ -36,10 +46,38 @@ export const NOT_YET_CONFIGURED_TRANSPORT: SyncTransport = async () => ({
   errorClass: 'TransportNotConfigured',
 });
 
+/**
+ * TQ-31: the real transport, calling convex/sessions.ts's
+ * submitTrackingSession. Uses `anyApi` (an untyped FunctionReference
+ * builder from convex/server) rather than a generated `api` object, since
+ * this environment still can't run `npx convex dev`'s codegen — the exact
+ * same class of workaround as the server-side `makeFunctionReference` calls
+ * from TQ-18/26/29b, just on the client side for the first time.
+ */
+export function convexSessionSyncTransport(client: ConvexReactClient): SyncTransport {
+  return async (payload) => {
+    try {
+      const result = await client.mutation(anyApi.sessions.submitTrackingSession, {
+        localSessionId: payload.sessionId,
+        startedAt: payload.startedAt,
+        endedAt: payload.endedAt,
+        movementMode: payload.mode,
+        elapsedSeconds: payload.elapsedSeconds,
+        distanceMeters: payload.distanceMeters,
+        newExplorationUnitsCount: payload.newExplorationUnitsCount,
+      });
+      return { ok: true, confirmedXp: result.totalConfirmedXp };
+    } catch (error) {
+      return { ok: false, errorClass: error instanceof Error ? error.constructor.name : 'UnknownError' };
+    }
+  };
+}
+
 export type SessionSyncDeps = {
   outbox: OutboxRepository;
   trackPoints: Pick<TrackPointRepository, 'deleteCapturedUpTo'>;
   session: Pick<SessionRepository, 'getById' | 'upsert'>;
+  xpProjection: Pick<XpProjectionRepository, 'applyServerSnapshot'>;
   transport: SyncTransport;
 };
 
@@ -74,6 +112,9 @@ export async function processDueSyncEvents(
         await deps.session.upsert({ ...session, status: 'completed' });
       }
       await deps.trackPoints.deleteCapturedUpTo(payload.sessionId, payload.endedAt);
+      if (result.confirmedXp !== undefined) {
+        await deps.xpProjection.applyServerSnapshot({ confirmedXp: result.confirmedXp, serverSnapshotAt: now });
+      }
       confirmed += 1;
       continue;
     }

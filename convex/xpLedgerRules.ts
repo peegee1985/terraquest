@@ -31,6 +31,53 @@ export function capBucketKey(sourceType: XpSourceType, dayKey: string): string |
   return CAP_BUCKET_SOURCE_TYPES.has(sourceType) ? `daily_base:${dayKey}` : null;
 }
 
+// Mirrors src/domain/types.ts's MovementMode — duplicated rather than
+// cross-imported (see module comment: convex/tsconfig.json is an isolated
+// program).
+export type MovementMode = 'walk' | 'run' | 'bike' | 'auto';
+
+/**
+ * TQ-31: mirrors src/domain/progression.ts's distanceXp — the server never
+ * trusts a client-computed XP amount, so this is recomputed here from the
+ * raw distanceMeters/mode a session submits (submitTrackingSession in
+ * sessions.ts), then clamped by the shared daily_base cap same as any other
+ * 'distance'-sourced award. Docs 03 "Režimy pohybu": bike counts at 0.35x,
+ * auto/vehicle at 0x — a rider/driver still gets their personal route, just
+ * no competitive distance XP for it.
+ */
+export function distanceXp(distanceMeters: number, mode: MovementMode): number {
+  const fullXp = Math.floor(Math.max(0, distanceMeters) / 100) * 5;
+  if (mode === 'bike') return Math.floor(fullXp * 0.35);
+  if (mode === 'auto') return 0;
+  return fullXp;
+}
+
+/**
+ * Mirrors src/domain/progression.ts's explorationXp. newNormalizedCells is
+ * expected to already be mode-gated by the caller (fog.ts's
+ * centerlineCellsForRoute is only ever accumulated while classified
+ * walk/run — see explorer-context.tsx), but this still zeroes bike/auto
+ * defensively rather than trusting that upstream gate alone.
+ */
+export function explorationXp(newNormalizedCells: number, mode: MovementMode): number {
+  if (mode === 'bike' || mode === 'auto') return 0;
+  return Math.min(600, Math.max(0, Math.floor(newNormalizedCells)) * 3);
+}
+
+/**
+ * Docs 03 "Denní kvalifikace a streak" — a day counts toward the streak if
+ * the user meets at least one condition. Only two of the three documented
+ * conditions are checked here ("20 minut aktivní chůze/běhu" and "denní
+ * průzkumná výprava s minimálně 1 km"); the third ("3 000 ověřených kroků")
+ * is deliberately omitted because no step-count data source exists yet
+ * (steps feature is still backlog, Pořadí 47) — adding it once that ships
+ * is a one-line change here, not a redesign.
+ */
+export function sessionQualifiesForStreak(mode: MovementMode, elapsedSeconds: number, distanceMeters: number): boolean {
+  if (mode !== 'walk' && mode !== 'run') return false;
+  return elapsedSeconds >= 20 * 60 || distanceMeters >= 1000;
+}
+
 /** Clamps a proposed award so the running total already recorded for its cap bucket never exceeds the cap. Never negative, never more than what's actually left in the budget. */
 export function clampToCapBudget(proposedAmount: number, alreadyAwardedInBucket: number, cap: number = DAILY_BASE_XP_CAP): number {
   const remaining = Math.max(0, cap - alreadyAwardedInBucket);
