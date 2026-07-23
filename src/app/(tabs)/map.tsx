@@ -1,16 +1,18 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useRef, useState } from 'react';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { ExplorerMap } from '../../components/map/explorer-map';
+import { ExplorerMap, type ExplorerMapHandle } from '../../components/map/explorer-map';
 import { PoiLayer, type PoiLayerState } from '../../components/map/poi-layer';
 
 import { PrimaryButton } from '@/components/ui/primitives';
+import { batteryIconName, formatBatteryPercent } from '@/domain/battery';
 import type { ViewportBounds } from '@/domain/fog';
 import { formatTemperatureC, weatherCodeToSummary } from '@/domain/weather';
+import { useBattery } from '@/hooks/use-battery';
 import { useLocationPermissions } from '@/hooks/use-location-permissions';
 import { useWeather } from '@/hooks/use-weather';
 import { convex } from '@/state/convex-client';
@@ -35,6 +37,18 @@ function WeatherBadge({ latitude, longitude }: { latitude: number; longitude: nu
     <View style={styles.weatherBadge}>
       <MaterialCommunityIcons color={colors.textPrimary} name={summary.icon} size={18} />
       <Text style={styles.weatherText}>{formatTemperatureC(weather.temperatureC)}</Text>
+    </View>
+  );
+}
+
+/** Positioned right under WeatherBadge, same fixed-offset-approximation caveat as that component's own comment. */
+function BatteryBadge() {
+  const battery = useBattery();
+  if (!battery || battery.level < 0) return null;
+  return (
+    <View style={styles.batteryBadge}>
+      <MaterialCommunityIcons color={battery.level <= 0.15 && !battery.charging ? colors.danger : colors.textPrimary} name={batteryIconName(battery.level, battery.charging) as never} size={18} />
+      <Text style={styles.weatherText}>{formatBatteryPercent(battery.level)}</Text>
     </View>
   );
 }
@@ -71,6 +85,7 @@ export default function MapScreen() {
   const router = useRouter();
   const { session, revealedCells, startSession, togglePause, finishSession } = useExplorer();
   const { isForegroundDenied, requestForeground } = useLocationPermissions();
+  const mapRef = useRef<ExplorerMapHandle>(null);
   // Reported by ExplorerMap (Leaflet's moveend on native, route-derived on
   // web) — feeds the POI query's bounding box. Starts at a placeholder
   // (see DEFAULT_MAP_BOUNDS) until the map's first real report lands.
@@ -136,6 +151,7 @@ export default function MapScreen() {
           <PoiLayer bounds={mapBounds}>
             {({ pois, discover }) => (
               <ExplorerMap
+                ref={mapRef}
                 onBoundsChange={setMapBounds}
                 onMarkerPress={(poiId) => void handleMarkerPress(poiId, pois, discover)}
                 pois={pois}
@@ -145,7 +161,7 @@ export default function MapScreen() {
             )}
           </PoiLayer>
         ) : (
-          <ExplorerMap onBoundsChange={setMapBounds} revealedCells={revealedCells} route={session.route} />
+          <ExplorerMap ref={mapRef} onBoundsChange={setMapBounds} revealedCells={revealedCells} route={session.route} />
         )}
 
         <View style={styles.topHud}>
@@ -159,6 +175,16 @@ export default function MapScreen() {
         </View>
 
         <WeatherBadge latitude={weatherLatitude} longitude={weatherLongitude} />
+        <BatteryBadge />
+
+        <Pressable
+          accessibilityLabel="Vycentrovat na moji polohu"
+          accessibilityRole="button"
+          onPress={() => mapRef.current?.recenterOnPlayer()}
+          style={styles.recenterButton}
+        >
+          <MaterialCommunityIcons color={colors.textPrimary} name="crosshairs-gps" size={24} />
+        </Pressable>
 
         {session.active ? (
           <View style={styles.sessionPanel}>
@@ -222,6 +248,37 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   weatherText: { ...typography.label, color: colors.textPrimary },
+  batteryBadge: {
+    position: 'absolute',
+    top: spacing.sm + 120,
+    right: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(7,17,26,0.92)',
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: colors.outline,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+  },
+  // Fixed offset rather than a measured one — same approximation caveat as
+  // weatherBadge/batteryBadge above. Sits above the session/start panel,
+  // which varies in height, so this is a "clears both in practice" number
+  // rather than something derived from an actual measured layout.
+  recenterButton: {
+    position: 'absolute',
+    right: spacing.md,
+    bottom: 200,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(7,17,26,0.92)',
+    borderWidth: 1,
+    borderColor: colors.outline,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   startPanel: { position: 'absolute', left: spacing.md, right: spacing.md, bottom: spacing.md, backgroundColor: 'rgba(7,17,26,0.96)', borderColor: colors.outline, borderWidth: 1, borderRadius: radii.xl, padding: spacing.md, gap: spacing.md },
   startCopy: { gap: 4 },
   startTitle: { ...typography.h2, color: colors.textPrimary },

@@ -1,1 +1,1 @@
-export { ExplorerMap } from './explorer-map.native';
+export { ExplorerMap, type ExplorerMapHandle } from './explorer-map.native';

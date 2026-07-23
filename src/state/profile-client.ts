@@ -6,6 +6,7 @@ export type MyProfile = {
   handle: string;
   displayName?: string;
   avatarId: string;
+  avatarPhotoUrl?: string;
   country?: string;
   totalXp: number;
   verifiedDistanceMeters: number;
@@ -13,6 +14,12 @@ export type MyProfile = {
   poiDiscoveriesCount: number;
   currentStreakDays: number;
   longestStreakDays: number;
+  dailyStepGoal: number;
+  stepGoalCurrentStreakDays: number;
+  stepGoalLongestStreakDays: number;
+  isVip: boolean;
+  xpMultiplier: number;
+  planExpiresAt?: number;
 };
 
 // Same clientFunctionReference trick as session-sync.ts/poi-client.ts —

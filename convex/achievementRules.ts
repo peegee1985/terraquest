@@ -14,7 +14,7 @@
  * maintained by shipped code (TQ-27/28/29).
  */
 
-export type AchievementCategory = 'consistency' | 'exploration' | 'quests';
+export type AchievementCategory = 'consistency' | 'exploration' | 'quests' | 'steps';
 export type AchievementRarity = 'common' | 'rare' | 'epic' | 'legendary';
 export type InventoryItemId = 'map_theme_token' | 'scanner_pulse' | 'memory_marker';
 
@@ -22,7 +22,8 @@ export type AchievementMetric =
   | 'longestStreakDays'
   | 'poiDiscoveriesCount'
   | 'dailyQuestsClaimedCount'
-  | 'weeklyQuestsClaimedCount';
+  | 'weeklyQuestsClaimedCount'
+  | 'stepGoalLongestStreakDays';
 
 export type AchievementMetrics = Record<AchievementMetric, number>;
 
@@ -74,6 +75,27 @@ export const ACHIEVEMENT_DEFINITIONS: readonly AchievementDefinition[] = [
     rewardXp: 200,
     itemReward: { itemId: 'memory_marker', quantity: 1 },
   },
+
+  // TQ-46 anti-cheat: every 'steps' definition MUST keep rewardXp: 0. This
+  // whole category exists specifically so hitting the daily step goal has
+  // a real, visible reward without ever creating a path from
+  // client-reported Health Connect data to XP or leaderboard position —
+  // see stepGoal.ts's recordStepGoalCheckIn and quests.ts's contributionFor
+  // for the same rule applied elsewhere. Cosmetic itemReward is fine
+  // (userInventoryItems never feeds XP/ranking either).
+  { id: 'step_streak_3', category: 'steps', rarity: 'common', metric: 'stepGoalLongestStreakDays', threshold: 3, rewardXp: 0 },
+  { id: 'step_streak_7', category: 'steps', rarity: 'common', metric: 'stepGoalLongestStreakDays', threshold: 7, rewardXp: 0 },
+  { id: 'step_streak_14', category: 'steps', rarity: 'rare', metric: 'stepGoalLongestStreakDays', threshold: 14, rewardXp: 0 },
+  {
+    id: 'step_streak_30',
+    category: 'steps',
+    rarity: 'rare',
+    metric: 'stepGoalLongestStreakDays',
+    threshold: 30,
+    rewardXp: 0,
+    itemReward: { itemId: 'scanner_pulse', quantity: 2 },
+  },
+  { id: 'step_streak_100', category: 'steps', rarity: 'epic', metric: 'stepGoalLongestStreakDays', threshold: 100, rewardXp: 0 },
 ];
 
 /**

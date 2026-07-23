@@ -1,5 +1,13 @@
+import { grantItem } from './inventory';
 import { levelForXp, levelsToClaim, PROGRESSION_VERSION, rankForLevel } from './progressionRules';
 import { capBucketKey, clampToCapBudget, gameDayKey, type XpSourceType } from './xpLedgerRules';
+
+// One Scanner Pulse per level-up — the "Rewards unlocked" panel on the
+// client's level-up celebration screen (see src/app's level-up overlay)
+// needs something real to display, and levelling up previously granted
+// nothing beyond the rank/userLevelClaims row itself.
+const LEVEL_UP_REWARD_ITEM_ID = 'scanner_pulse';
+const LEVEL_UP_REWARD_QUANTITY = 1;
 
 export type AwardXpArgs = {
   userId: any;
@@ -127,6 +135,11 @@ export async function awardXp(ctx: any, args: AwardXpArgs): Promise<AwardXpResul
       progressionVersion: PROGRESSION_VERSION,
       claimedAt: now,
     });
+    // Safe to call unguarded here (grantItem itself has no dedup check) —
+    // this line only runs once per level thanks to the alreadyClaimed
+    // check above, same reasoning achievements.ts documents for its own
+    // grantItem call.
+    await grantItem(ctx, { userId: args.userId, itemId: LEVEL_UP_REWARD_ITEM_ID, quantity: LEVEL_UP_REWARD_QUANTITY, now });
     levelUps.push({ level, rankId });
   }
 

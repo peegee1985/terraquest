@@ -1,4 +1,4 @@
-import { ComponentType, RefAttributes, useEffect, useMemo, useRef, useState } from 'react';
+import { ComponentType, forwardRef, RefAttributes, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import RNWebView, { type WebViewMessageEvent, type WebViewProps } from 'react-native-webview';
 
@@ -33,21 +33,26 @@ const DEFAULT_BOUNDS: ViewportBounds = {
   maxLongitude: INITIAL_CENTER[1] + 0.01,
 };
 
-export function ExplorerMap({
-  route,
-  revealedCells,
-  pois = [],
-  onBoundsChange,
-  onMarkerPress,
-}: {
-  route: TrackPoint[];
-  revealedCells: readonly string[];
-  pois?: PoiMarker[];
-  onBoundsChange?: (bounds: ViewportBounds) => void;
-  onMarkerPress?: (poiId: string) => void;
-}) {
+export type ExplorerMapHandle = { recenterOnPlayer: () => void };
+
+export const ExplorerMap = forwardRef<
+  ExplorerMapHandle,
+  {
+    route: TrackPoint[];
+    revealedCells: readonly string[];
+    pois?: PoiMarker[];
+    onBoundsChange?: (bounds: ViewportBounds) => void;
+    onMarkerPress?: (poiId: string) => void;
+  }
+>(function ExplorerMap({ route, revealedCells, pois = [], onBoundsChange, onMarkerPress }, ref) {
   const webviewRef = useRef<RNWebView>(null);
   const [ready, setReady] = useState(false);
+
+  useImperativeHandle(ref, () => ({
+    recenterOnPlayer: () => {
+      webviewRef.current?.injectJavaScript('window.recenterOnPlayer && window.recenterOnPlayer(); true;');
+    },
+  }));
   // Reported by the Leaflet page on 'moveend', used to cull the persisted
   // cell set down to what's actually on screen (TQ-23: keeps the fog
   // renderer fast regardless of how many cells have been discovered).
@@ -110,7 +115,7 @@ export function ExplorerMap({
       />
     </View>
   );
-}
+});
 
 /**
  * react-native-maps required a Google Maps API key that was never configured,
@@ -150,6 +155,12 @@ const leafletHtml = `<!doctype html>
       var currentMarker = null;
       var accuracyCircle = null;
       var poiMarkers = {};
+      var lastCurrent = null;
+
+      window.recenterOnPlayer = function () {
+        if (!lastCurrent) return;
+        map.setView([lastCurrent.lat, lastCurrent.lng], Math.max(map.getZoom(), ${INITIAL_ZOOM}));
+      };
 
       function postBounds() {
         var bounds = map.getBounds();
@@ -175,6 +186,7 @@ const leafletHtml = `<!doctype html>
 
         if (currentMarker) { map.removeLayer(currentMarker); currentMarker = null; }
         if (accuracyCircle) { map.removeLayer(accuracyCircle); accuracyCircle = null; }
+        lastCurrent = data.current;
         if (data.current) {
           accuracyCircle = L.circle([data.current.lat, data.current.lng], {
             radius: 35, color: 'rgba(56,230,138,0.5)', fillColor: 'rgba(56,230,138,0.14)', fillOpacity: 1, interactive: false,
@@ -184,6 +196,9 @@ const leafletHtml = `<!doctype html>
           }).addTo(map);
         }
 
+        // Common POIs deliberately use a different color (blue) than the
+        // player's own position marker (brand green) — they used to share
+        // the same color, which made them hard to tell apart at a glance.
         var nextPoiIds = {};
         (data.pois || []).forEach(function (poi) {
           nextPoiIds[poi.poiId] = true;
@@ -193,7 +208,7 @@ const leafletHtml = `<!doctype html>
             radius: rare ? 10 : 7,
             color: rare ? '#F5C542' : '#F5F7F4',
             weight: 2,
-            fillColor: rare ? '#F5C542' : '${colors.brand}',
+            fillColor: rare ? '#F5C542' : '${colors.blue}',
             fillOpacity: 0.85,
           }).addTo(map);
           marker.on('click', function () {

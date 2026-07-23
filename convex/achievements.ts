@@ -35,6 +35,7 @@ export async function checkAndGrantAchievements(
     poiDiscoveriesCount: stats.poiDiscoveriesCount ?? 0,
     dailyQuestsClaimedCount: stats.dailyQuestsClaimedCount ?? 0,
     weeklyQuestsClaimedCount: stats.weeklyQuestsClaimedCount ?? 0,
+    stepGoalLongestStreakDays: stats.stepGoalLongestStreakDays ?? 0,
   };
 
   const existingRows = await ctx.db
@@ -93,7 +94,7 @@ export async function checkAndGrantAchievements(
 
 const achievementRowValidator = v.object({
   achievementId: v.string(),
-  category: v.union(v.literal('consistency'), v.literal('exploration'), v.literal('quests')),
+  category: v.union(v.literal('consistency'), v.literal('exploration'), v.literal('quests'), v.literal('steps')),
   rarity: v.union(v.literal('common'), v.literal('rare'), v.literal('epic'), v.literal('legendary')),
   unlockedAt: v.number(),
 });

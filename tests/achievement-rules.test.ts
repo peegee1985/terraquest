@@ -7,6 +7,7 @@ const zeroMetrics: AchievementMetrics = {
   poiDiscoveriesCount: 0,
   dailyQuestsClaimedCount: 0,
   weeklyQuestsClaimedCount: 0,
+  stepGoalLongestStreakDays: 0,
 };
 
 describe('evaluateNewlyUnlocked', () => {
@@ -28,10 +29,9 @@ describe('evaluateNewlyUnlocked', () => {
 
   it('evaluates each metric independently across categories', () => {
     const metrics: AchievementMetrics = {
+      ...zeroMetrics,
       longestStreakDays: 30,
-      poiDiscoveriesCount: 0,
       dailyQuestsClaimedCount: 10,
-      weeklyQuestsClaimedCount: 0,
     };
     const unlocked = evaluateNewlyUnlocked(metrics, new Set()).map((d) => d.id);
     expect(unlocked).toContain('streak_3');
@@ -46,5 +46,19 @@ describe('evaluateNewlyUnlocked', () => {
   it('every definition id is unique', () => {
     const ids = ACHIEVEMENT_DEFINITIONS.map((d) => d.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('every steps-category definition awards zero XP (anti-cheat: never a path from Health Connect data to XP)', () => {
+    const stepsDefinitions = ACHIEVEMENT_DEFINITIONS.filter((d) => d.category === 'steps');
+    expect(stepsDefinitions.length).toBeGreaterThan(0);
+    for (const definition of stepsDefinitions) {
+      expect(definition.rewardXp).toBe(0);
+    }
+  });
+
+  it('unlocks step-goal streak tiers off stepGoalLongestStreakDays independently of the movement streak', () => {
+    const metrics: AchievementMetrics = { ...zeroMetrics, stepGoalLongestStreakDays: 30 };
+    const unlocked = evaluateNewlyUnlocked(metrics, new Set()).map((d) => d.id);
+    expect(unlocked).toEqual(['step_streak_3', 'step_streak_7', 'step_streak_14', 'step_streak_30']);
   });
 });

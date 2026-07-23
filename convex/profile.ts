@@ -2,6 +2,9 @@ import { getAuthUserId } from '@convex-dev/auth/server';
 import { mutationGeneric as mutation, queryGeneric as query } from 'convex/server';
 import { v } from 'convex/values';
 
+import { effectiveXpMultiplier, isVipActive } from './planRules';
+import { DEFAULT_DAILY_STEP_GOAL } from './stepGoalRules';
+
 // TQ-45: sets the profile's ISO 3166-1 alpha-2 country code, the field the
 // country leaderboard filters on (convex/leaderboards.ts). Deliberately not
 // validated against a hardcoded country-code list here — that's a client-side
@@ -39,6 +42,7 @@ export const getMyProfile = query({
       handle: v.string(),
       displayName: v.optional(v.string()),
       avatarId: v.string(),
+      avatarPhotoUrl: v.optional(v.string()),
       country: v.optional(v.string()),
       totalXp: v.number(),
       verifiedDistanceMeters: v.number(),
@@ -46,6 +50,12 @@ export const getMyProfile = query({
       poiDiscoveriesCount: v.number(),
       currentStreakDays: v.number(),
       longestStreakDays: v.number(),
+      dailyStepGoal: v.number(),
+      stepGoalCurrentStreakDays: v.number(),
+      stepGoalLongestStreakDays: v.number(),
+      isVip: v.boolean(),
+      xpMultiplier: v.number(),
+      planExpiresAt: v.optional(v.number()),
     }),
   ),
   handler: async (ctx: any) => {
@@ -57,11 +67,14 @@ export const getMyProfile = query({
       .query('userStats')
       .withIndex('by_user', (q: any) => q.eq('userId', userId))
       .unique();
+    const now = Date.now();
+    const avatarPhotoUrl = user.avatarStorageId ? await ctx.storage.getUrl(user.avatarStorageId) : null;
     return {
       userId,
       handle: user.handle,
       displayName: user.displayName,
       avatarId: user.avatarId,
+      avatarPhotoUrl: avatarPhotoUrl ?? undefined,
       country: user.country,
       totalXp: stats?.totalXp ?? 0,
       verifiedDistanceMeters: stats?.verifiedDistanceMeters ?? 0,
@@ -69,6 +82,12 @@ export const getMyProfile = query({
       poiDiscoveriesCount: stats?.poiDiscoveriesCount ?? 0,
       currentStreakDays: stats?.currentStreakDays ?? 0,
       longestStreakDays: stats?.longestStreakDays ?? 0,
+      dailyStepGoal: stats?.dailyStepGoal ?? DEFAULT_DAILY_STEP_GOAL,
+      stepGoalCurrentStreakDays: stats?.stepGoalCurrentStreakDays ?? 0,
+      stepGoalLongestStreakDays: stats?.stepGoalLongestStreakDays ?? 0,
+      isVip: isVipActive(stats?.plan, stats?.planExpiresAt, now),
+      xpMultiplier: effectiveXpMultiplier(stats?.xpMultiplier, stats?.plan, stats?.planExpiresAt, now),
+      planExpiresAt: stats?.planExpiresAt,
     };
   },
 });

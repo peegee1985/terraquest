@@ -28,7 +28,18 @@ export default defineSchema({
     // TerraQuest profile fields.
     handle: v.string(),
     displayName: v.optional(v.string()),
+    // A preset avatar id (see src/domain/avatars.ts) — the fallback when no
+    // photo has been uploaded, and the value new accounts start with.
     avatarId: v.string(),
+    // Set when the user picks "upload a photo" instead of a preset — takes
+    // priority over avatarId wherever an avatar is displayed. Convex file
+    // storage (avatar.ts's setAvatarPhoto), not a raw URL, so access can
+    // stay behind the same auth the rest of the profile data has.
+    avatarStorageId: v.optional(v.id('_storage')),
+    // Timestamps of every past username change — handleRules.ts's
+    // canChangeHandle reads this to enforce "once ever" (regular) / "twice
+    // per rolling year" (VIP) without a separate table.
+    handleChangeTimestamps: v.optional(v.array(v.number())),
     locale: v.string(),
     timezone: v.string(),
     // TQ-45: ISO 3166-1 alpha-2 country code, self-reported by the user —
@@ -73,6 +84,31 @@ export default defineSchema({
     poiDiscoveriesCount: v.optional(v.number()),
     dailyQuestsClaimedCount: v.optional(v.number()),
     weeklyQuestsClaimedCount: v.optional(v.number()),
+    // User-configurable daily step goal (stepGoal.ts's STEP_GOAL_PRESETS);
+    // absent means the default (DEFAULT_DAILY_STEP_GOAL) applies.
+    dailyStepGoal: v.optional(v.number()),
+    // A streak/badge track for hitting the daily step goal, deliberately
+    // separate from currentStreakDays/longestStreakDays (the movement-based
+    // streak) and NEVER touched by awardXp — see stepGoal.ts's
+    // recordStepGoalCheckIn. Health Connect step counts are client-reported
+    // and trivially fakeable by other apps writing manual entries, so this
+    // whole track stays isolated from XP/leaderboards by construction, per
+    // TQ-46's anti-cheat decision (same rule as the 'steps' quest metric in
+    // quests.ts's contributionFor).
+    stepGoalCurrentStreakDays: v.optional(v.number()),
+    stepGoalLongestStreakDays: v.optional(v.number()),
+    lastStepGoalDayKey: v.optional(v.string()),
+    // Entitlement/plan model — admin-settable only (see admin.ts), no real
+    // checkout wired up yet. xpMultiplier is stored explicitly rather than
+    // derived from plan so an admin can hand-tune an individual user's
+    // bonus independent of their plan tier.
+    plan: v.optional(v.union(v.literal('free'), v.literal('vip'))),
+    xpMultiplier: v.optional(v.number()),
+    planExpiresAt: v.optional(v.number()),
+    planSource: v.optional(v.union(v.literal('admin_grant'), v.literal('iap'), v.literal('stripe'))),
+    // Idempotency guard for the daily login bonus (dailyBonus.ts) — one
+    // claim per gameDayKey, mirroring lastQualifiedDayKey/lastStepGoalDayKey.
+    lastDailyBonusDayKey: v.optional(v.string()),
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])
@@ -247,7 +283,9 @@ export default defineSchema({
   userAchievements: defineTable({
     userId: v.id('users'),
     achievementId: v.string(),
-    category: v.union(v.literal('consistency'), v.literal('exploration'), v.literal('quests')),
+    // 'steps' (added for the daily-step-goal streak track) is deliberately
+    // never paired with a rewardXp > 0 definition — see achievementRules.ts.
+    category: v.union(v.literal('consistency'), v.literal('exploration'), v.literal('quests'), v.literal('steps')),
     rarity: v.union(v.literal('common'), v.literal('rare'), v.literal('epic'), v.literal('legendary')),
     unlockedAt: v.number(),
   }).index('by_user_achievement', ['userId', 'achievementId']),

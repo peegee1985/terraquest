@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { forwardRef, useEffect, useImperativeHandle } from 'react';
 import { StyleSheet, View } from 'react-native';
 import Svg, { Circle, G, Line, Path, Rect } from 'react-native-svg';
 
@@ -54,19 +54,24 @@ function fogGeometryToPath(outerRing: LatLng[], holes: LatLng[][], bounds: Viewp
   return [ringToPath(outerRing, bounds), ...holes.map((hole) => ringToPath(hole, bounds))].join(' ');
 }
 
-export function ExplorerMap({
-  route,
-  revealedCells,
-  pois = [],
-  onBoundsChange,
-  onMarkerPress,
-}: {
-  route: TrackPoint[];
-  revealedCells: readonly string[];
-  pois?: PoiMarker[];
-  onBoundsChange?: (bounds: ViewportBounds) => void;
-  onMarkerPress?: (poiId: string) => void;
-}) {
+export type ExplorerMapHandle = { recenterOnPlayer: () => void };
+
+export const ExplorerMap = forwardRef<
+  ExplorerMapHandle,
+  {
+    route: TrackPoint[];
+    revealedCells: readonly string[];
+    pois?: PoiMarker[];
+    onBoundsChange?: (bounds: ViewportBounds) => void;
+    onMarkerPress?: (poiId: string) => void;
+  }
+>(function ExplorerMap({ route, revealedCells, pois = [], onBoundsChange, onMarkerPress }, ref) {
+  // No real pan/zoom on this static SVG projection (bounds are always
+  // route-derived — see boundsFromRoute above), so there's nothing to
+  // recenter to. Exposed anyway so map.tsx's recenter button can call the
+  // same ref API on both platforms without a platform check.
+  useImperativeHandle(ref, () => ({ recenterOnPlayer: () => undefined }));
+
   const path = route.length
     ? route.map((_, index) => `${index === 0 ? 'M' : 'L'} ${120 + index * 58} ${330 - index * 42}`).join(' ')
     : 'M 120 330 L 178 288 L 236 246 L 294 204 L 352 162';
@@ -107,7 +112,7 @@ export function ExplorerMap({
               key={poi.poiId}
               cx={x}
               cy={y}
-              fill={rare ? '#F5C542' : colors.brand}
+              fill={rare ? '#F5C542' : colors.blue}
               onPress={() => onMarkerPress?.(poi.poiId)}
               r={rare ? 10 : 7}
               stroke="#F5F7F4"
@@ -118,6 +123,6 @@ export function ExplorerMap({
       </Svg>
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({ container: { flex: 1, backgroundColor: colors.background } });
