@@ -23,8 +23,9 @@ function HomeContent({ profile, board }: { profile: MyProfile | null | undefined
   const currentRank = rankForLevel(progress.level);
   const newAreasLabel = profile ? String(profile.explorationUnits) : '—';
   const streakLabel = profile ? `${profile.currentStreakDays} dní` : '—';
+  const dailyStepGoal = profile?.dailyStepGoal ?? DAILY_STEP_GOAL;
   const todayStepsLabel = steps.status === 'ready' ? steps.steps.toLocaleString('cs-CZ') : '—';
-  const stepGoalRatio = steps.status === 'ready' ? dailyStepGoalRatio(steps.steps) : 0;
+  const stepGoalRatio = steps.status === 'ready' ? dailyStepGoalRatio(steps.steps, dailyStepGoal) : 0;
   const dailyQuests = board?.daily.slice(0, 2) ?? [];
 
   return (
@@ -67,7 +68,7 @@ function HomeContent({ profile, board }: { profile: MyProfile | null | undefined
         <View style={styles.goalRow}>
           <View>
             <Text style={styles.goalTitle}>Denní cíl</Text>
-            <Text style={styles.goalValue}>{todayStepsLabel} / {DAILY_STEP_GOAL.toLocaleString('cs-CZ')} kroků</Text>
+            <Text style={styles.goalValue}>{todayStepsLabel} / {dailyStepGoal.toLocaleString('cs-CZ')} kroků</Text>
           </View>
           <Text style={styles.goalPercent}>{steps.status === 'ready' ? `${Math.round(stepGoalRatio * 100)} %` : '—'}</Text>
         </View>

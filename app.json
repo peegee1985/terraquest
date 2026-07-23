@@ -60,6 +60,14 @@
       ],
       "expo-health-connect",
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "TerraQuest potřebuje přístup k fotkám, abys mohl/a nastavit vlastní fotku jako avatar.",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ],
+      [
         "expo-build-properties",
         {
           "android": {

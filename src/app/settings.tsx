@@ -7,6 +7,7 @@ import { Alert, Linking, Pressable, Share, StyleSheet, Text, View } from 'react-
 import { Card, Eyebrow, PrimaryButton, Screen } from '@/components/ui/primitives';
 import { getLocalPersistence } from '@/data/local';
 import { redactPointsInZones } from '@/domain/privacy-zones';
+import { DAILY_STEP_GOAL, STEP_GOAL_PRESETS } from '@/domain/steps';
 import { LOCAL_SESSION_ID } from '@/domain/tracking-task';
 import { useLocationPermissions } from '@/hooks/use-location-permissions';
 import { useAuthIdentity } from '@/state/auth-context';
@@ -15,6 +16,7 @@ import { useMyXpLedger } from '@/state/data-export-client';
 import { useExplorer } from '@/state/explorer-context';
 import { useMyProfile } from '@/state/profile-client';
 import { useMyPrivateZones } from '@/state/privacy-zones-client';
+import { useSetDailyStepGoal } from '@/state/step-goal-client';
 import { colors, radii, spacing, typography } from '@/theme/tokens';
 
 type ExportInputs = {
@@ -93,6 +95,37 @@ function ExportRow() {
       </View>
       <MaterialCommunityIcons color={colors.textDisabled} name="chevron-right" size={22} />
     </Pressable>
+  );
+}
+
+/** Only mounted when `convex` is truthy — same precondition as ConnectedExportRow. */
+function StepGoalRow() {
+  const profile = useMyProfile();
+  const setDailyStepGoal = useSetDailyStepGoal();
+  const currentGoal = profile?.dailyStepGoal ?? DAILY_STEP_GOAL;
+
+  return (
+    <Card style={styles.stepGoalCard}>
+      <View style={styles.actionCopy}>
+        <Text style={styles.cardTitle}>Denní cíl kroků</Text>
+        <Text style={styles.cardBody}>{currentGoal.toLocaleString('cs-CZ')} kroků</Text>
+      </View>
+      <View style={styles.stepGoalPresetsRow}>
+        {STEP_GOAL_PRESETS.map((preset) => {
+          const active = preset === currentGoal;
+          return (
+            <Pressable
+              accessibilityRole="button"
+              key={preset}
+              onPress={() => void setDailyStepGoal({ goal: preset })}
+              style={[styles.stepGoalPreset, active && styles.stepGoalPresetActive]}
+            >
+              <Text style={[styles.stepGoalPresetText, active && styles.stepGoalPresetTextActive]}>{(preset / 1000).toFixed(0)}k</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </Card>
   );
 }
 
@@ -214,6 +247,8 @@ export default function SettingsScreen() {
         <MaterialCommunityIcons color={colors.textDisabled} name="chevron-right" size={22} />
       </Pressable>
 
+      {convex ? <StepGoalRow /> : null}
+
       {convex ? <ConnectedExportRow /> : <ExportRow />}
       <DeleteHistoryRow />
 
@@ -234,4 +269,10 @@ const styles = StyleSheet.create({
   cardBody: { ...typography.caption, color: colors.textSecondary },
   action: { minHeight: 76, padding: spacing.md, borderWidth: 1, borderColor: colors.outline, borderRadius: radii.lg, backgroundColor: colors.surface, flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   actionCopy: { flex: 1, gap: 2 },
+  stepGoalCard: { gap: spacing.sm },
+  stepGoalPresetsRow: { flexDirection: 'row', gap: spacing.xs },
+  stepGoalPreset: { flex: 1, paddingVertical: spacing.xs, alignItems: 'center', borderRadius: radii.md, backgroundColor: colors.surfaceElevated, borderWidth: 1, borderColor: colors.outline },
+  stepGoalPresetActive: { backgroundColor: colors.brandSoft, borderColor: colors.brand },
+  stepGoalPresetText: { ...typography.label, color: colors.textSecondary },
+  stepGoalPresetTextActive: { color: colors.brand },
 });
