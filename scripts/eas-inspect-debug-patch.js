@@ -33,10 +33,29 @@ const newBlock = `            catch (err) {
                 if (err && err.stderr) log_1.default.error('--- stderr ---\\n' + err.stderr);
             }`;
 
+// build:inspect hardcodes `nonInteractive: false` in the flags object it
+// passes to runBuildAndSubmitAsync, so validateExpoUpdatesInstalledAsProjectDependencyAsync
+// always tries a real interactive confirm prompt — confirmed it checks for
+// an actual TTY, not just readable stdin, since piping "n" produced the
+// identical "stdin is not readable" error. There's no CLI flag to override
+// this (it isn't derived from any flag build:inspect exposes), so flip the
+// literal directly. Scoped to the flags-object occurrence only, not the
+// earlier getContextAsync(...) call a few lines up, which controls login
+// and is left alone.
+const oldFlagsBlock = `                    flags: {
+                        nonInteractive: false,`;
+const newFlagsBlock = `                    flags: {
+                        nonInteractive: true,`;
+
 const contents = fs.readFileSync(target, 'utf8');
 if (!contents.includes(oldBlock)) {
   console.error('eas-inspect-debug-patch: expected catch block not found — eas-cli internals likely changed, patch needs updating');
   process.exit(1);
 }
-fs.writeFileSync(target, contents.split(oldBlock).join(newBlock));
+if (!contents.includes(oldFlagsBlock)) {
+  console.error('eas-inspect-debug-patch: expected flags block not found — eas-cli internals likely changed, patch needs updating');
+  process.exit(1);
+}
+const patched = contents.split(oldBlock).join(newBlock).split(oldFlagsBlock).join(newFlagsBlock);
+fs.writeFileSync(target, patched);
 console.log(`eas-inspect-debug-patch: patched ${target}`);
