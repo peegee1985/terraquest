@@ -108,7 +108,8 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index('by_user_created_at', ['userId', 'createdAt'])
-    .index('by_user_event', ['userId', 'eventId']),
+    .index('by_user_event', ['userId', 'eventId'])
+    .index('by_user_cap_bucket', ['userId', 'capBucket']),
 
   userQuests: defineTable({
     userId: v.id('users'),
