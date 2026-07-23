@@ -164,7 +164,7 @@ describe('streakMilestoneReward', () => {
     expect(streakMilestoneReward(3)).toEqual({ xp: 25 });
     expect(streakMilestoneReward(7)).toEqual({ xp: 75 });
     expect(streakMilestoneReward(14)).toEqual({ xp: 125 });
-    expect(streakMilestoneReward(30)).toEqual({ xp: 250, badge: 'streak_30' });
+    expect(streakMilestoneReward(30)).toEqual({ xp: 250 });
   });
 
   it('awards every further 30-day block', () => {

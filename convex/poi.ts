@@ -1,6 +1,7 @@
 import { mutationGeneric as mutation } from 'convex/server';
 import { v } from 'convex/values';
 
+import { checkAndGrantAchievements } from './achievements';
 import { PROGRESSION_VERSION } from './progressionRules';
 import {
   hasReachedCommonDailyCap,
@@ -8,6 +9,7 @@ import {
   isWithinDiscoveryRadius,
   poiRewardXp,
 } from './poiRules';
+import { bumpUserStatsCounter } from './userStatsCounters';
 import { awardXp } from './xpAward';
 import { gameDayKey } from './xpLedgerRules';
 
@@ -143,6 +145,12 @@ export const discoverPoi = mutation({
       dayKey,
       firstDiscoveredAt: args.occurredAt,
     });
+
+    // TQ-30: counts every discovery toward the lifetime total (used by the
+    // "Průzkum" achievement tier), independent of whether this particular
+    // discovery still earns XP under the daily cap below.
+    await bumpUserStatsCounter(ctx, args.userId, 'poiDiscoveriesCount', 1, args.occurredAt);
+    await checkAndGrantAchievements(ctx, { userId: args.userId, occurredAt: args.occurredAt });
 
     if (hasReachedCommonDailyCap(poi.rarity, commonDiscoveriesToday)) {
       // Discovery itself is still recorded (personal map/history value),

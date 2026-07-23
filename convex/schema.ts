@@ -61,6 +61,13 @@ export default defineSchema({
     // MVP"); a full generic inventory system is TQ-30's job, but the
     // streak logic needs *some* token count to bridge a missed day.
     restTokens: v.optional(v.number()),
+    // TQ-30: denormalized lifetime counters that drive achievement-threshold
+    // checks (checkAndGrantAchievements in achievements.ts) without scanning
+    // full history tables on every check. Bumped in the same transaction as
+    // the event they count (poi.ts's discoverPoi, quests.ts's claimQuest).
+    poiDiscoveriesCount: v.optional(v.number()),
+    dailyQuestsClaimedCount: v.optional(v.number()),
+    weeklyQuestsClaimedCount: v.optional(v.number()),
     updatedAt: v.number(),
   }).index('by_user', ['userId']),
 
@@ -128,6 +135,12 @@ export default defineSchema({
     // from definitionId string parsing.
     category: v.union(v.literal('movement'), v.literal('exploration'), v.literal('discovery')),
     metric: v.union(v.literal('steps'), v.literal('distance_m'), v.literal('new_units'), v.literal('active_minutes')),
+    // TQ-30: denormalized like category/metric — lets claimQuest bump the
+    // right achievement counter without parsing definitionId/periodKey.
+    // Optional because rows inserted before this field existed have none;
+    // claimQuest treats a missing kind as "don't count toward either
+    // achievement track" rather than guessing from periodKey shape.
+    kind: v.optional(v.union(v.literal('daily'), v.literal('weekly'))),
     target: v.number(),
     progress: v.number(),
     rewardXp: v.number(),
@@ -190,4 +203,31 @@ export default defineSchema({
   })
     .index('by_user_poi', ['userId', 'poiId'])
     .index('by_user_day', ['userId', 'dayKey']),
+
+  // TQ-30: existence of a (userId, achievementId) row is the idempotency
+  // check — "tier se odemkne právě jednou" — same row-existence pattern as
+  // userLevelClaims/poiDiscoveries. category/rarity are denormalized from
+  // the achievement definition at unlock time so a later rebalance of the
+  // rules doesn't retroactively change an already-unlocked badge's rarity.
+  userAchievements: defineTable({
+    userId: v.id('users'),
+    achievementId: v.string(),
+    category: v.union(v.literal('consistency'), v.literal('exploration'), v.literal('quests')),
+    rarity: v.union(v.literal('common'), v.literal('rare'), v.literal('epic'), v.literal('legendary')),
+    unlockedAt: v.number(),
+  }).index('by_user_achievement', ['userId', 'achievementId']),
+
+  // TQ-30: MVP inventory — one row per (userId, itemId), quantity-stacking.
+  // Deliberately has no field that could ever feed an XP/ranking
+  // computation ("itemy nemění leaderboard" is a structural guarantee, not
+  // just a convention): nothing in this table is ever read by xpAward.ts or
+  // any future leaderboard query. Rest Day Token keeps using userStats's
+  // dedicated restTokens counter from TQ-28 rather than migrating into this
+  // table — that mechanic already ships and works, so it's left alone.
+  userInventoryItems: defineTable({
+    userId: v.id('users'),
+    itemId: v.union(v.literal('map_theme_token'), v.literal('scanner_pulse'), v.literal('memory_marker')),
+    quantity: v.number(),
+    updatedAt: v.number(),
+  }).index('by_user_item', ['userId', 'itemId']),
 });

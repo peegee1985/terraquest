@@ -1,6 +1,7 @@
 import { mutationGeneric as mutation, queryGeneric as query } from 'convex/server';
 import { v } from 'convex/values';
 
+import { checkAndGrantAchievements } from './achievements';
 import {
   applyQualifyingDay,
   gameDayKey,
@@ -11,6 +12,7 @@ import {
   type StreakState,
 } from './questRules';
 import { PROGRESSION_VERSION } from './progressionRules';
+import { bumpUserStatsCounter } from './userStatsCounters';
 import { awardXp } from './xpAward';
 
 const categoryValidator = v.union(v.literal('movement'), v.literal('exploration'), v.literal('discovery'));
@@ -74,6 +76,7 @@ export const ensureDailyQuests = mutation({
         periodKey: dayKey,
         category: definition.category,
         metric: definition.metric,
+        kind: 'daily',
         target: definition.target,
         progress: 0,
         rewardXp: definition.rewardXp,
@@ -108,6 +111,7 @@ export const ensureWeeklyQuest = mutation({
       periodKey: weekKey,
       category: definition.category,
       metric: definition.metric,
+      kind: 'weekly',
       target: definition.target,
       progress: 0,
       rewardXp: definition.rewardXp,
@@ -162,6 +166,16 @@ export const claimQuest = mutation({
     });
 
     await ctx.db.patch(args.questId, { status: 'claimed', claimedAt: args.now });
+
+    // TQ-30: quests inserted before the `kind` field existed have none —
+    // skip the counter bump rather than guess from periodKey shape.
+    if (quest.kind === 'daily') {
+      await bumpUserStatsCounter(ctx, quest.userId, 'dailyQuestsClaimedCount', 1, args.now);
+    } else if (quest.kind === 'weekly') {
+      await bumpUserStatsCounter(ctx, quest.userId, 'weeklyQuestsClaimedCount', 1, args.now);
+    }
+    await checkAndGrantAchievements(ctx, { userId: quest.userId, occurredAt: args.now });
+
     return { claimed: true, awarded: result.awarded };
   },
 });
@@ -238,6 +252,12 @@ export const recordQualifyingDay = mutation({
           occurredAt: args.now,
         });
       }
+
+      // TQ-30: longestStreakDays just changed above, so this is the moment
+      // a streak-tier achievement (streak_3/7/14/30/100) can newly unlock —
+      // the achievement system now owns "grant a badge at day 30" generically
+      // rather than questRules.ts's old one-off `badge` field.
+      await checkAndGrantAchievements(ctx, { userId: args.userId, occurredAt: args.now });
     }
 
     return {

@@ -188,12 +188,19 @@ export function applyQualifyingDay(state: StreakState, dayKey: string): StreakUp
   return { next, streakChanged: true, restTokenConsumed: false };
 }
 
-/** Docs 03 streak reward table, extended with the "every further 30-day block" rule. Returns null when currentStreakDays doesn't land on a milestone. */
-export function streakMilestoneReward(currentStreakDays: number): { xp: number; badge?: string } | null {
+/**
+ * Docs 03 streak reward table, extended with the "every further 30-day
+ * block" rule. Returns null when currentStreakDays doesn't land on a
+ * milestone. The day-30 badge from docs 03 ("odznak Měsíční streak") is
+ * granted generically by achievements.ts's streak_30 definition (TQ-30),
+ * triggered off userStats.longestStreakDays crossing 30 — not returned from
+ * here, so this stays purely about XP.
+ */
+export function streakMilestoneReward(currentStreakDays: number): { xp: number } | null {
   if (currentStreakDays === 3) return { xp: 25 };
   if (currentStreakDays === 7) return { xp: 75 };
   if (currentStreakDays === 14) return { xp: 125 };
-  if (currentStreakDays === 30) return { xp: 250, badge: 'streak_30' };
+  if (currentStreakDays === 30) return { xp: 250 };
   if (currentStreakDays > 30 && (currentStreakDays - 30) % 30 === 0) return { xp: 250 };
   return null;
 }
