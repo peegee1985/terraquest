@@ -15,10 +15,21 @@ import { Quest, QuestTone } from '@/domain/types';
 import { cardShadow, colors, radii, spacing, typography } from '@/theme/tokens';
 
 export function Screen({ children, scroll = true }: { children: ReactNode; scroll?: boolean }) {
-  const content = <View style={styles.screenContent}>{children}</View>;
+  // flex:1 on this content view is only correct for the non-scrolling case
+  // (filling SafeAreaView directly). Applying it while nested inside a
+  // ScrollView caps the content at the viewport's height instead of its own
+  // natural (often taller) size — anything past one screen's worth of
+  // stacked cards silently got clipped and was unreachable by scrolling.
+  const content = <View style={[styles.screenContent, !scroll && styles.screenContentFill]}>{children}</View>;
   return (
     <SafeAreaView style={styles.safeArea}>
-      {scroll ? <ScrollView contentContainerStyle={styles.scrollContent}>{content}</ScrollView> : content}
+      {scroll ? (
+        <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+          {content}
+        </ScrollView>
+      ) : (
+        content
+      )}
     </SafeAreaView>
   );
 }
@@ -108,8 +119,10 @@ export function PrimaryButton({ label, icon = 'compass-outline', onPress, tone =
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.background },
+  scrollView: { flex: 1 },
   scrollContent: { flexGrow: 1 },
-  screenContent: { flex: 1, paddingHorizontal: spacing.md, paddingTop: spacing.sm, paddingBottom: spacing.xl, gap: spacing.md },
+  screenContent: { paddingHorizontal: spacing.md, paddingTop: spacing.sm, paddingBottom: spacing.xl, gap: spacing.md },
+  screenContentFill: { flex: 1 },
   card: { backgroundColor: colors.surface, borderColor: colors.outline, borderWidth: 1, borderRadius: radii.lg, padding: spacing.md, ...cardShadow },
   eyebrow: { ...typography.label, letterSpacing: 1.2, textTransform: 'uppercase' },
   sectionTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing.xs },

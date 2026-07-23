@@ -1,13 +1,13 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
-import { demoQuests, demoRoute, demoSnapshot } from '@/data/demo';
+import { demoRoute } from '@/data/demo';
 import { getLocalPersistence, type LocalPersistence } from '@/data/local';
 import { distanceXp, explorationXp } from '@/domain/progression';
 import { cellsRevealedByRoute, centerlineCellsForRoute } from '@/domain/fog';
 import { filterRoute, routeDistanceMeters } from '@/domain/gps-filter';
 import { getStepsBetween } from '@/domain/health-connect';
 import { classifyMovement, computeRollingSpeedMps, movementModeBit } from '@/domain/movement';
-import { MovementMode, Quest, TrackPoint } from '@/domain/types';
+import { ExplorerSnapshot, MovementMode, TrackPoint } from '@/domain/types';
 import {
   LOCAL_SESSION_ID,
   startLocationTracking,
@@ -36,8 +36,7 @@ type SessionState = {
 };
 
 type ExplorerContextValue = {
-  snapshot: typeof demoSnapshot;
-  quests: Quest[];
+  snapshot: ExplorerSnapshot;
   session: SessionState;
   hasCompletedSession: boolean;
   revealedCells: string[];
@@ -59,7 +58,6 @@ const ROUTE_REFRESH_INTERVAL_MS = 1500;
 // can still be waiting on outbox confirmation while the user browses
 // elsewhere in the app, or the app could've been relaunched since finishing.
 const SYNC_POLL_INTERVAL_MS = 30_000;
-const EXTRA_SNAPSHOT_PREFERENCE_KEY = 'explorer.snapshot.extra.v1';
 // TQ-20: background location must not be offered until the user has
 // actually finished an expedition once — this flag gates that in Settings.
 const HAS_COMPLETED_SESSION_PREFERENCE_KEY = 'explorer.hasCompletedSession.v1';
@@ -76,8 +74,7 @@ const initialSession: SessionState = {
 const ExplorerContext = createContext<ExplorerContextValue | null>(null);
 
 export function ExplorerProvider({ children }: { children: ReactNode }) {
-  const [snapshot, setSnapshot] = useState(demoSnapshot);
-  const [quests] = useState(demoQuests);
+  const [snapshot, setSnapshot] = useState<ExplorerSnapshot>({ totalXp: 0 });
   const [session, setSession] = useState<SessionState>(initialSession);
   const [hasCompletedSession, setHasCompletedSession] = useState(false);
   // TQ-23: cells ever revealed, loaded straight from local_explored_cell —
@@ -108,12 +105,11 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         persistenceRef.current = persistence;
 
-        const [xpProjection, activeSession, storedRoute, extraSnapshotJson, hasCompletedSessionValue, storedRevealedCells] =
+        const [xpProjection, activeSession, storedRoute, hasCompletedSessionValue, storedRevealedCells] =
           await Promise.all([
             persistence.xpProjection.get(),
             persistence.session.getActive(),
             persistence.trackPoints.listBySession(LOCAL_SESSION_ID),
-            persistence.preferences.get(EXTRA_SNAPSHOT_PREFERENCE_KEY),
             persistence.preferences.get(HAS_COMPLETED_SESSION_PREFERENCE_KEY),
             persistence.exploredCells.listAllCellIds(),
           ]);
@@ -135,8 +131,7 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
           : demoRoute;
         nextSequenceRef.current = storedRoute.length;
 
-        const extraSnapshot = extraSnapshotJson ? (JSON.parse(extraSnapshotJson) as Partial<typeof demoSnapshot>) : {};
-        setSnapshot((current) => ({ ...current, ...extraSnapshot, totalXp: xpProjection.confirmed_xp || current.totalXp }));
+        setSnapshot((current) => ({ ...current, totalXp: xpProjection.confirmed_xp || current.totalXp }));
 
         if (activeSession) {
           modeRef.current = activeSession.mode;
@@ -159,9 +154,11 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
           setSession((current) => ({ ...current, route }));
         }
 
+        // A brand-new local install (never synced) starts at 0 XP, not a
+        // placeholder value — a fresh player hasn't earned anything yet.
         if (xpProjection.updated_at === 0) {
           await persistence.xpProjection.applyServerSnapshot({
-            confirmedXp: demoSnapshot.totalXp,
+            confirmedXp: 0,
             serverSnapshotAt: Date.now(),
           });
         }
@@ -175,14 +172,6 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    const { totalXp, ...rest } = snapshot;
-    persistenceRef.current?.preferences
-      .set(EXTRA_SNAPSHOT_PREFERENCE_KEY, JSON.stringify(rest), Date.now())
-      .catch(() => undefined);
-  }, [hydrated, snapshot]);
 
   // TQ-24/TQ-31: retries the outbox with backoff regardless of whether a
   // session is currently active — a finished session can be sitting in
@@ -453,8 +442,8 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
   }, [session.active]);
 
   const value = useMemo(
-    () => ({ snapshot, quests, session, hasCompletedSession, revealedCells, startSession, togglePause, finishSession, resetLocalHistory }),
-    [finishSession, hasCompletedSession, quests, resetLocalHistory, revealedCells, session, snapshot, startSession, togglePause],
+    () => ({ snapshot, session, hasCompletedSession, revealedCells, startSession, togglePause, finishSession, resetLocalHistory }),
+    [finishSession, hasCompletedSession, resetLocalHistory, revealedCells, session, snapshot, startSession, togglePause],
   );
 
   return <ExplorerContext.Provider value={value}>{children}</ExplorerContext.Provider>;

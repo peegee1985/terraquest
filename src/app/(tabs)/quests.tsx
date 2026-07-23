@@ -4,32 +4,8 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
 import { Card, Eyebrow, PrimaryButton, ProgressBar, QuestCard, Screen, SectionTitle } from '@/components/ui/primitives';
 import { convex } from '@/state/convex-client';
-import { QuestCategory, QuestMetric, QuestRow, useClaimQuest, useEnsureDailyQuests, useEnsureWeeklyQuest, useMyQuestBoard } from '@/state/quests-client';
-import { Quest, QuestTone } from '@/domain/types';
+import { QuestRow, toDisplayQuest, useClaimQuest, useEnsureDailyQuests, useEnsureWeeklyQuest, useMyQuestBoard } from '@/state/quests-client';
 import { colors, radii, spacing, typography } from '@/theme/tokens';
-
-const CATEGORY_TONE: Record<QuestCategory, QuestTone> = { movement: 'brand', exploration: 'blue', discovery: 'amber' };
-const METRIC_COPY: Record<QuestMetric, { title: string; description: string; unit: string; divisor: number }> = {
-  steps: { title: 'Ujdi kroky', description: 'Sečti kroky během dne. (Počítání kroků zatím není zapojené — tenhle úkol se nedá splnit.)', unit: 'kroků', divisor: 1 },
-  new_units: { title: 'Odkryj nové území', description: 'Projdi místa, která ještě nejsou na tvé mapě.', unit: 'jednotek', divisor: 1 },
-  active_minutes: { title: 'Buď v pohybu', description: 'Stráv čas aktivním průzkumem.', unit: 'min', divisor: 1 },
-  distance_m: { title: 'Ujdi vzdálenost', description: 'Naskládej kilometry během celého týdne.', unit: 'km', divisor: 1000 },
-};
-
-function toDisplayQuest(row: QuestRow): Quest {
-  const copy = METRIC_COPY[row.metric];
-  return {
-    id: row._id,
-    title: copy.title,
-    description: copy.description,
-    progress: row.progress / copy.divisor,
-    target: row.target / copy.divisor,
-    unit: copy.unit,
-    rewardXp: row.rewardXp,
-    tone: CATEGORY_TONE[row.category],
-    completed: row.status === 'completed' || row.status === 'claimed',
-  };
-}
 
 function ClaimableQuestCard({ row }: { row: QuestRow }) {
   const claimQuest = useClaimQuest();

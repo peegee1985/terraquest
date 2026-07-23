@@ -1,17 +1,31 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Card, Eyebrow, MetricCard, PrimaryButton, ProgressBar, QuestCard, Screen, SectionTitle } from '@/components/ui/primitives';
-import { levelProgress } from '@/domain/progression';
+import { levelProgress, rankForLevel } from '@/domain/progression';
+import { DAILY_STEP_GOAL, dailyStepGoalRatio } from '@/domain/steps';
+import { useDailySteps } from '@/hooks/use-daily-steps';
+import { convex } from '@/state/convex-client';
 import { useExplorer } from '@/state/explorer-context';
+import { type MyProfile, useMyProfile } from '@/state/profile-client';
+import { QuestBoard, toDisplayQuest, useEnsureDailyQuests, useEnsureWeeklyQuest, useMyQuestBoard } from '@/state/quests-client';
 import { colors, radii, spacing, typography } from '@/theme/tokens';
 
-export default function HomeScreen() {
+function HomeContent({ profile, board }: { profile: MyProfile | null | undefined; board: QuestBoard | undefined }) {
   const router = useRouter();
-  const { snapshot, quests } = useExplorer();
-  const progress = levelProgress(snapshot.totalXp);
+  const { snapshot } = useExplorer();
+  const steps = useDailySteps();
+  const totalXp = profile?.totalXp ?? snapshot.totalXp;
+  const progress = levelProgress(totalXp);
+  const currentRank = rankForLevel(progress.level);
+  const newAreasLabel = profile ? String(profile.explorationUnits) : '—';
+  const streakLabel = profile ? `${profile.currentStreakDays} dní` : '—';
+  const todayStepsLabel = steps.status === 'ready' ? steps.steps.toLocaleString('cs-CZ') : '—';
+  const stepGoalRatio = steps.status === 'ready' ? dailyStepGoalRatio(steps.steps) : 0;
+  const dailyQuests = board?.daily.slice(0, 2) ?? [];
 
   return (
     <Screen>
@@ -28,7 +42,7 @@ export default function HomeScreen() {
       <LinearGradient colors={['#173729', '#102432', '#0E1C28']} end={{ x: 1, y: 1 }} start={{ x: 0, y: 0 }} style={styles.levelCard}>
         <View style={styles.levelTop}>
           <View>
-            <Text style={styles.rank}>Poutník</Text>
+            <Text style={styles.rank}>{currentRank.label}</Text>
             <Text style={styles.level}>Úroveň {progress.level}</Text>
           </View>
           <View style={styles.levelBadge}>
@@ -44,28 +58,54 @@ export default function HomeScreen() {
       </LinearGradient>
 
       <View style={styles.metricsRow}>
-        <MetricCard icon="shoe-print" label="Dnešní kroky" value={snapshot.todaySteps.toLocaleString('cs-CZ')} />
-        <MetricCard accent={colors.amber} icon="map-marker-path" label="Nové oblasti" value={String(snapshot.newCells)} />
-        <MetricCard accent={colors.blue} icon="fire" label="Série dní" value={`${snapshot.streakDays} dní`} />
+        <MetricCard icon="shoe-print" label="Dnešní kroky" value={todayStepsLabel} />
+        <MetricCard accent={colors.amber} icon="map-marker-path" label="Nové oblasti" value={newAreasLabel} />
+        <MetricCard accent={colors.blue} icon="fire" label="Série dní" value={streakLabel} />
       </View>
 
       <Card style={styles.goalCard}>
         <View style={styles.goalRow}>
           <View>
             <Text style={styles.goalTitle}>Denní cíl</Text>
-            <Text style={styles.goalValue}>{snapshot.todaySteps.toLocaleString('cs-CZ')} / {snapshot.stepGoal.toLocaleString('cs-CZ')} kroků</Text>
+            <Text style={styles.goalValue}>{todayStepsLabel} / {DAILY_STEP_GOAL.toLocaleString('cs-CZ')} kroků</Text>
           </View>
-          <Text style={styles.goalPercent}>{Math.round((snapshot.todaySteps / snapshot.stepGoal) * 100)} %</Text>
+          <Text style={styles.goalPercent}>{steps.status === 'ready' ? `${Math.round(stepGoalRatio * 100)} %` : '—'}</Text>
         </View>
-        <ProgressBar progress={snapshot.todaySteps / snapshot.stepGoal} />
+        <ProgressBar progress={stepGoalRatio} />
+        {steps.status === 'unavailable' ? <Text style={styles.goalNote}>Počítání kroků vyžaduje Health Connect, který na tomto zařízení není dostupný.</Text> : null}
+        {steps.status === 'needs-permission' ? <PrimaryButton label="Povolit přístup ke krokům" onPress={() => void steps.requestAccess()} tone="surface" /> : null}
       </Card>
 
       <PrimaryButton label="Vyrazit objevovat" onPress={() => router.push('/map')} />
 
       <SectionTitle action="Zobrazit vše" title="Dnešní výpravy" />
-      {quests.slice(0, 2).map((quest) => <QuestCard compact key={quest.id} quest={quest} />)}
+      {board === undefined && convex ? <ActivityIndicator color={colors.brand} /> : null}
+      {dailyQuests.map((row) => <QuestCard compact key={row._id} quest={toDisplayQuest(row)} />)}
     </Screen>
   );
+}
+
+/** Only mounted when `convex` is truthy — useMyProfile/useMyQuestBoard's useQuery needs a ConvexProvider ancestor, same precondition as progress.tsx/quests.tsx. */
+function ConnectedHomeScreen() {
+  const [now] = useState(() => Date.now());
+  const profile = useMyProfile();
+  const board = useMyQuestBoard(now);
+  const ensureDaily = useEnsureDailyQuests();
+  const ensureWeekly = useEnsureWeeklyQuest();
+
+  useEffect(() => {
+    // Idempotent on the server — safe alongside quests.tsx calling the same
+    // mutations, in case the user opens Home before ever visiting Výpravy.
+    void ensureDaily({ now, isExplorationSaturated: false });
+    void ensureWeekly({ now });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return <HomeContent board={board} profile={profile} />;
+}
+
+export default function HomeScreen() {
+  return convex ? <ConnectedHomeScreen /> : <HomeContent board={undefined} profile={null} />;
 }
 
 const styles = StyleSheet.create({
@@ -87,4 +127,5 @@ const styles = StyleSheet.create({
   goalTitle: { ...typography.h3, color: colors.textPrimary },
   goalValue: { ...typography.caption, color: colors.textSecondary, marginTop: 3 },
   goalPercent: { ...typography.h2, color: colors.brand },
+  goalNote: { ...typography.caption, color: colors.textSecondary },
 });

@@ -21,14 +21,12 @@ export type TrackPoint = {
   timestamp: number;
 };
 
+// Local-only fallback for when there's no backend connection to read the
+// real total from (see explorer-context.tsx's xpProjection). Every other
+// figure the app shows (steps, new areas, streak) now comes straight from
+// real sources — Health Connect or the server's userStats — instead of a
+// locally-held snapshot, after a bug report showed the home screen was
+// still displaying demo placeholder numbers as if they were real.
 export type ExplorerSnapshot = {
-  level: number;
   totalXp: number;
-  todaySteps: number;
-  stepGoal: number;
-  activeDistanceMeters: number;
-  newCells: number;
-  streakDays: number;
-  exploredAreaKm2: number;
-  discoveredPlaces: number;
 };
