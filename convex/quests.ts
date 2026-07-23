@@ -158,15 +158,16 @@ async function applyUpdateQuestProgress(ctx: any, args: { questId: any; progress
  * TQ-31 adjacent: called from submitTrackingSession once a tracked session
  * ends, bumping every active quest (today's daily periodKey + this week's
  * weekly periodKey) whose metric this session actually produced evidence
- * for. `steps` quests are deliberately skipped — no step-counting source
- * exists yet (TQ-46, still backlog) — so a movement-category "steps" quest
- * simply never progresses until that lands; every other metric this
- * project currently generates (new_units, active_minutes, distance_m) is
- * covered.
+ * for. `stepsCount` comes from Health Connect (TQ-46) when available;
+ * callers pass 0 when it isn't (unavailable, permission not granted, or an
+ * iOS device — Health Connect is Android-only), in which case a
+ * movement-category "steps" quest simply doesn't progress, same as before
+ * TQ-46 existed. Every other metric this project currently generates
+ * (new_units, active_minutes, distance_m) is always covered.
  */
 export async function applyQuestProgressForSession(
   ctx: any,
-  args: { userId: any; now: number; distanceMeters: number; newExplorationUnitsCount: number; elapsedSeconds: number },
+  args: { userId: any; now: number; distanceMeters: number; newExplorationUnitsCount: number; elapsedSeconds: number; stepsCount: number },
 ): Promise<void> {
   const user = await ctx.db.get(args.userId);
   if (!user) return;
@@ -183,7 +184,8 @@ export async function applyQuestProgressForSession(
     if (metric === 'new_units') return args.newExplorationUnitsCount;
     if (metric === 'active_minutes') return activeMinutes;
     if (metric === 'distance_m') return args.distanceMeters;
-    return 0; // 'steps' — no source yet.
+    if (metric === 'steps') return args.stepsCount;
+    return 0;
   };
 
   for (const quest of [...dailyRows, ...weeklyRows]) {

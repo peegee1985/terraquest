@@ -43,6 +43,7 @@ function enqueueFinishedSession(outbox: ReturnType<typeof createOutboxRepository
     pointCount,
     distanceMeters: 800,
     newExplorationUnitsCount: 5,
+    stepsCount: 0,
   };
   return outbox.enqueue({
     eventId: sessionSyncEventId(SESSION_ID, startedAt),

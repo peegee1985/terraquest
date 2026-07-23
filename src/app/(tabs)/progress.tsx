@@ -4,13 +4,62 @@ import { useRouter } from 'expo-router';
 import type { ComponentProps } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { Card, Eyebrow, MetricCard, ProgressBar, Screen, SectionTitle } from '@/components/ui/primitives';
+import { Card, Eyebrow, MetricCard, PrimaryButton, ProgressBar, Screen, SectionTitle } from '@/components/ui/primitives';
 import { RESOLUTION, resolutionStats } from '@/domain/fog';
 import { cumulativeXpForLevel, levelProgress, rankForLevel, RANK_TIERS, revealRadiusForLevel } from '@/domain/progression';
+import { DAILY_STEP_GOAL, dailyStepGoalRatio } from '@/domain/steps';
+import { useDailySteps } from '@/hooks/use-daily-steps';
 import { convex } from '@/state/convex-client';
 import { useExplorer } from '@/state/explorer-context';
 import { type MyProfile, useMyProfile } from '@/state/profile-client';
 import { colors, radii, spacing, typography } from '@/theme/tokens';
+
+/** TQ-46: Health Connect only exists on Android — there's no iOS bridge wired here (see health-connect.ts), so this card is Android-only in practice. It degrades to a quiet "not available" line rather than hiding entirely, so the gap is visible instead of silently missing. */
+function StepGoalCard() {
+  const steps = useDailySteps();
+
+  if (steps.status === 'loading') return null;
+  if (steps.status === 'unavailable') {
+    return (
+      <Card style={styles.stepsCard}>
+        <View style={styles.stepsIcon}>
+          <MaterialCommunityIcons color={colors.textDisabled} name="shoe-print" size={24} />
+        </View>
+        <Text style={styles.cardBody}>Počítání kroků vyžaduje Health Connect, který na tomto zařízení není dostupný.</Text>
+      </Card>
+    );
+  }
+  if (steps.status === 'needs-permission') {
+    return (
+      <Card style={styles.stepsCard}>
+        <View style={styles.stepsIcon}>
+          <MaterialCommunityIcons color={colors.brand} name="shoe-print" size={24} />
+        </View>
+        <View style={styles.stepsCopy}>
+          <Text style={styles.cardTitle}>Kroky dnes</Text>
+          <Text style={styles.cardBody}>Povol přístup k Health Connect, ať vidíš dnešní kroky a denní cíl.</Text>
+        </View>
+        <PrimaryButton label="Povolit" onPress={() => void steps.requestAccess()} tone="surface" />
+      </Card>
+    );
+  }
+  return (
+    <Card style={styles.stepsCardColumn}>
+      <View style={styles.stepsHeaderRow}>
+        <View style={styles.stepsIcon}>
+          <MaterialCommunityIcons color={colors.brand} name="shoe-print" size={24} />
+        </View>
+        <View style={styles.stepsCopy}>
+          <Text style={styles.cardTitle}>Kroky dnes</Text>
+          <Text style={styles.cardBody}>
+            {steps.steps.toLocaleString('cs-CZ')} / {DAILY_STEP_GOAL.toLocaleString('cs-CZ')}
+          </Text>
+        </View>
+      </View>
+      <ProgressBar progress={dailyStepGoalRatio(steps.steps)} />
+    </Card>
+  );
+}
 
 type RankIconName = ComponentProps<typeof MaterialCommunityIcons>['name'];
 
@@ -76,6 +125,8 @@ function ProgressContent({ profile }: { profile: MyProfile | null | undefined })
         </Card>
       </Pressable>
 
+      <StepGoalCard />
+
       <SectionTitle title="Celoživotní mapa" />
       <View style={styles.metricsRow}>
         <MetricCard icon="map-marker-radius" label="Odkrytá plocha" value={`${exploredAreaKm2.toFixed(2)} km²`} />
@@ -132,6 +183,13 @@ const styles = StyleSheet.create({
   heroMetaText: { ...typography.caption, color: colors.textSecondary },
   leaderboardCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   leaderboardText: { ...typography.h3, color: colors.textPrimary, flex: 1 },
+  stepsCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  stepsCardColumn: { gap: spacing.sm },
+  stepsHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  stepsIcon: { width: 40, height: 40, borderRadius: radii.md, backgroundColor: colors.brandSoft, alignItems: 'center', justifyContent: 'center' },
+  stepsCopy: { flex: 1, gap: 2 },
+  cardTitle: { ...typography.h3, color: colors.textPrimary },
+  cardBody: { ...typography.caption, color: colors.textSecondary },
   metricsRow: { flexDirection: 'row', gap: spacing.xs },
   ranksCard: { paddingVertical: spacing.sm },
   rankRow: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, position: 'relative' },

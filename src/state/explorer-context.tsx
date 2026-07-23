@@ -5,6 +5,7 @@ import { getLocalPersistence, type LocalPersistence } from '@/data/local';
 import { distanceXp, explorationXp } from '@/domain/progression';
 import { cellsRevealedByRoute, centerlineCellsForRoute } from '@/domain/fog';
 import { filterRoute, routeDistanceMeters } from '@/domain/gps-filter';
+import { getStepsBetween } from '@/domain/health-connect';
 import { classifyMovement, computeRollingSpeedMps, movementModeBit } from '@/domain/movement';
 import { MovementMode, Quest, TrackPoint } from '@/domain/types';
 import {
@@ -376,6 +377,10 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
         const distanceMeters = routeDistanceMeters(filtered);
         const normalizedCountAtEnd = await persistence.exploredCells.countNormalizedForXp();
         const newExplorationUnitsCount = Math.max(0, normalizedCountAtEnd - normalizedCountAtStart);
+        // TQ-46: 0 if Health Connect is unavailable/not granted (never
+        // throws — see health-connect.ts) — the steps quest metric simply
+        // doesn't progress in that case, same as before TQ-46 existed.
+        const stepsCount = startedAt !== null ? await getStepsBetween(new Date(startedAt), new Date(endedAt)).catch(() => 0) : 0;
 
         // Optimistic local estimate, shown immediately — replaced by the
         // server's authoritative confirmedXp once the sync transport
@@ -406,6 +411,7 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
           pointCount: nextSequenceRef.current,
           distanceMeters,
           newExplorationUnitsCount,
+          stepsCount,
         };
         await persistence.outbox.enqueue({
           eventId: sessionSyncEventId(LOCAL_SESSION_ID, startedAt),

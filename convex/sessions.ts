@@ -35,6 +35,10 @@ export const submitTrackingSession = mutation({
     elapsedSeconds: v.number(),
     distanceMeters: v.number(),
     newExplorationUnitsCount: v.number(),
+    // TQ-46: 0 when Health Connect is unavailable/permission not granted —
+    // the client never omits this, it just sends 0 (see health-connect.ts's
+    // getStepsBetween, which itself never throws and returns 0 the same way).
+    stepsCount: v.number(),
   },
   returns: v.object({
     distanceAwarded: v.number(),
@@ -73,6 +77,9 @@ export const submitTrackingSession = mutation({
 
     await bumpUserStatsCounter(ctx, userId, 'verifiedDistanceMeters', Math.max(0, args.distanceMeters), args.endedAt);
     await bumpUserStatsCounter(ctx, userId, 'explorationUnits', Math.max(0, args.newExplorationUnitsCount), args.endedAt);
+    if (args.stepsCount > 0) {
+      await bumpUserStatsCounter(ctx, userId, 'verifiedSteps', Math.max(0, args.stepsCount), args.endedAt);
+    }
 
     if (sessionQualifiesForStreak(args.movementMode, args.elapsedSeconds, args.distanceMeters)) {
       await applyRecordQualifyingDay(ctx, { userId, now: args.endedAt });
@@ -84,6 +91,7 @@ export const submitTrackingSession = mutation({
       distanceMeters: Math.max(0, args.distanceMeters),
       newExplorationUnitsCount: Math.max(0, args.newExplorationUnitsCount),
       elapsedSeconds: Math.max(0, args.elapsedSeconds),
+      stepsCount: Math.max(0, args.stepsCount),
     });
 
     const stats = await ctx.db

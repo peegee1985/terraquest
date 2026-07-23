@@ -28,6 +28,9 @@ export type SessionSyncPayload = {
   // number computed here.
   distanceMeters: number;
   newExplorationUnitsCount: number;
+  // TQ-46: steps during this session from Health Connect, 0 if unavailable
+  // (see health-connect.ts's getStepsBetween, which never throws).
+  stepsCount: number;
 };
 
 export type SyncResult = { ok: true; confirmedXp?: number } | { ok: false; errorClass: string };
@@ -82,6 +85,7 @@ type SubmitTrackingSessionMutation = FunctionReference<
     elapsedSeconds: number;
     distanceMeters: number;
     newExplorationUnitsCount: number;
+    stepsCount: number;
   },
   { distanceAwarded: number; explorationAwarded: number; totalConfirmedXp: number; levelUps: { level: number; rankId: string }[] }
 >;
@@ -106,6 +110,7 @@ export function convexSessionSyncTransport(client: ConvexReactClient): SyncTrans
         elapsedSeconds: payload.elapsedSeconds,
         distanceMeters: payload.distanceMeters,
         newExplorationUnitsCount: payload.newExplorationUnitsCount,
+        stepsCount: payload.stepsCount ?? 0,
       });
       return { ok: true, confirmedXp: result.totalConfirmedXp };
     } catch (error) {

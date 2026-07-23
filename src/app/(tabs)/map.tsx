@@ -10,11 +10,34 @@ import { PoiLayer, type PoiLayerState } from '../../components/map/poi-layer';
 
 import { PrimaryButton } from '@/components/ui/primitives';
 import type { ViewportBounds } from '@/domain/fog';
+import { formatTemperatureC, weatherCodeToSummary } from '@/domain/weather';
 import { useLocationPermissions } from '@/hooks/use-location-permissions';
+import { useWeather } from '@/hooks/use-weather';
 import { convex } from '@/state/convex-client';
 import { useExplorer } from '@/state/explorer-context';
 import type { PoiMarker } from '@/state/poi-client';
 import { colors, radii, spacing, typography } from '@/theme/tokens';
+
+/**
+ * Positioned "right under the zoom in/out buttons" — Leaflet's own zoom
+ * control (native only, see explorer-map.native.tsx) renders inside the
+ * WebView at its default top:10/right:10 position with two ~30px-tall
+ * buttons; this is a plain React Native overlay sitting outside that
+ * WebView, so it can't read the control's real rendered position — the
+ * offset below is a fixed approximation of "below those two buttons",
+ * not a measured one.
+ */
+function WeatherBadge({ latitude, longitude }: { latitude: number; longitude: number }) {
+  const weather = useWeather(latitude, longitude);
+  if (weather.status !== 'ready') return null;
+  const summary = weatherCodeToSummary(weather.code);
+  return (
+    <View style={styles.weatherBadge}>
+      <MaterialCommunityIcons color={colors.textPrimary} name={summary.icon} size={18} />
+      <Text style={styles.weatherText}>{formatTemperatureC(weather.temperatureC)}</Text>
+    </View>
+  );
+}
 
 function formatPoiFeedback(poi: PoiMarker, result: { discovered: boolean; awarded: number; reason?: string }): string | null {
   if (result.discovered && result.awarded > 0) return `${poi.name}: objeveno! +${result.awarded} XP`;
@@ -52,6 +75,12 @@ export default function MapScreen() {
   // web) — feeds the POI query's bounding box. Starts at a placeholder
   // (see DEFAULT_MAP_BOUNDS) until the map's first real report lands.
   const [mapBounds, setMapBounds] = useState<ViewportBounds>(DEFAULT_MAP_BOUNDS);
+  // Rounded to ~1km precision so useWeather's effect (keyed on
+  // latitude/longitude) doesn't refetch on every 1.5s GPS poll during an
+  // active session — weather doesn't vary at that resolution anyway.
+  const currentPoint = session.route.at(-1);
+  const weatherLatitude = Math.round((currentPoint?.latitude ?? 50.0893) * 100) / 100;
+  const weatherLongitude = Math.round((currentPoint?.longitude ?? 14.4226) * 100) / 100;
 
   const handleMarkerPress = useCallback(
     async (poiId: string, pois: PoiMarker[], discover: PoiLayerState['discover']) => {
@@ -129,6 +158,8 @@ export default function MapScreen() {
           </View>
         </View>
 
+        <WeatherBadge latitude={weatherLatitude} longitude={weatherLongitude} />
+
         {session.active ? (
           <View style={styles.sessionPanel}>
             <View style={styles.sessionMetrics}>
@@ -176,6 +207,21 @@ const styles = StyleSheet.create({
   brand: { ...typography.label, color: colors.textPrimary, letterSpacing: 1.4 },
   statusRow: { flexDirection: 'row', gap: 6, alignItems: 'center', marginTop: 4 },
   statusText: { ...typography.caption },
+  weatherBadge: {
+    position: 'absolute',
+    top: spacing.sm + 76,
+    right: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(7,17,26,0.92)',
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: colors.outline,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+  },
+  weatherText: { ...typography.label, color: colors.textPrimary },
   startPanel: { position: 'absolute', left: spacing.md, right: spacing.md, bottom: spacing.md, backgroundColor: 'rgba(7,17,26,0.96)', borderColor: colors.outline, borderWidth: 1, borderRadius: radii.xl, padding: spacing.md, gap: spacing.md },
   startCopy: { gap: 4 },
   startTitle: { ...typography.h2, color: colors.textPrimary },

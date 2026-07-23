@@ -10,7 +10,8 @@ export type UserStatsCounterField =
   | 'dailyQuestsClaimedCount'
   | 'weeklyQuestsClaimedCount'
   | 'verifiedDistanceMeters'
-  | 'explorationUnits';
+  | 'explorationUnits'
+  | 'verifiedSteps';
 
 export async function bumpUserStatsCounter(
   ctx: any,
