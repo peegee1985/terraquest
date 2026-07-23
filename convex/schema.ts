@@ -150,4 +150,44 @@ export default defineSchema({
     progressionVersion: v.string(),
     claimedAt: v.number(),
   }).index('by_user_level', ['userId', 'level']),
+
+  // TQ-29: no real content seeded yet — populating this table needs a
+  // chosen external POI data provider (OSM Overpass, Google Places, ...),
+  // a separate product/licensing decision. The discovery mechanism below
+  // is fully functional against whatever rows eventually land here.
+  poi: defineTable({
+    sourceId: v.string(),
+    name: v.string(),
+    category: v.union(
+      v.literal('nature'),
+      v.literal('culture'),
+      v.literal('viewpoint'),
+      v.literal('gastronomy'),
+      v.literal('sport'),
+      v.literal('history'),
+    ),
+    rarity: v.union(v.literal('common'), v.literal('rare')),
+    latitude: v.number(),
+    longitude: v.number(),
+    discoveryRadiusMeters: v.number(),
+    safetyStatus: v.union(v.literal('safe'), v.literal('excluded')),
+    visibility: v.union(v.literal('public'), v.literal('hidden')),
+    updatedAt: v.number(),
+  }).index('by_source', ['sourceId']),
+
+  // TQ-29: existence of a (userId, poiId) row is the idempotency check —
+  // "jeden POI dá první odměnu jen jednou" — dayKey lets the mutation
+  // count today's *common*-rarity discoveries for the 10/day cap without
+  // scanning a user's entire discovery history.
+  poiDiscoveries: defineTable({
+    userId: v.id('users'),
+    poiId: v.id('poi'),
+    // Denormalized from the poi row at discovery time so the daily-cap
+    // count query doesn't need to look up each POI individually.
+    poiRarity: v.union(v.literal('common'), v.literal('rare')),
+    dayKey: v.string(),
+    firstDiscoveredAt: v.number(),
+  })
+    .index('by_user_poi', ['userId', 'poiId'])
+    .index('by_user_day', ['userId', 'dayKey']),
 });
