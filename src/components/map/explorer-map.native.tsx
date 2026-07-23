@@ -24,6 +24,7 @@ type MapPayload = {
   current: { lat: number; lng: number } | null;
   fog: { outerRing: [number, number][]; holes: [number, number][][] };
   pois: { poiId: string; lat: number; lng: number; rarity: PoiMarker['rarity'] }[];
+  avatar: { photoUrl?: string; emoji: string; isVip: boolean };
 };
 
 const DEFAULT_BOUNDS: ViewportBounds = {
@@ -41,10 +42,16 @@ export const ExplorerMap = forwardRef<
     route: TrackPoint[];
     revealedCells: readonly string[];
     pois?: PoiMarker[];
+    avatarPhotoUrl?: string;
+    avatarEmoji?: string;
+    isVip?: boolean;
     onBoundsChange?: (bounds: ViewportBounds) => void;
     onMarkerPress?: (poiId: string) => void;
   }
->(function ExplorerMap({ route, revealedCells, pois = [], onBoundsChange, onMarkerPress }, ref) {
+>(function ExplorerMap(
+  { route, revealedCells, pois = [], avatarPhotoUrl, avatarEmoji = '🧭', isVip = false, onBoundsChange, onMarkerPress },
+  ref,
+) {
   const webviewRef = useRef<RNWebView>(null);
   const [ready, setReady] = useState(false);
 
@@ -68,8 +75,9 @@ export const ExplorerMap = forwardRef<
       current: currentPayload,
       fog: { outerRing: ringToPairs(geometry.outerRing), holes: geometry.holes.map(ringToPairs) },
       pois: pois.map((poi) => ({ poiId: poi.poiId, lat: poi.latitude, lng: poi.longitude, rarity: poi.rarity })),
+      avatar: { photoUrl: avatarPhotoUrl, emoji: avatarEmoji, isVip },
     };
-  }, [route, revealedCells, bounds, pois]);
+  }, [route, revealedCells, bounds, pois, avatarPhotoUrl, avatarEmoji, isVip]);
 
   useEffect(() => {
     if (!ready) return;
@@ -135,6 +143,10 @@ const leafletHtml = `<!doctype html>
     .leaflet-control-attribution{font-size:9px!important;background:rgba(7,17,26,.82)!important;color:#8FA6B5!important}
     .leaflet-control-attribution a{color:${colors.brand}!important}
     .leaflet-control-zoom a{background:${colors.background}!important;color:#EDF0F7!important;border-color:${colors.outline}!important}
+    .player-avatar-icon{display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;background:${colors.surface};border:2px solid ${colors.brand};box-shadow:0 0 0 2px rgba(0,0,0,0.25);overflow:hidden}
+    .player-avatar-icon.is-vip{border-color:#F5C542;box-shadow:0 0 0 2px rgba(245,197,66,0.35)}
+    .player-avatar-icon img{width:100%;height:100%;object-fit:cover}
+    .player-avatar-icon .emoji{font-size:18px;line-height:1}
   </style>
 </head>
 <body>
@@ -191,9 +203,20 @@ const leafletHtml = `<!doctype html>
           accuracyCircle = L.circle([data.current.lat, data.current.lng], {
             radius: 35, color: 'rgba(56,230,138,0.5)', fillColor: 'rgba(56,230,138,0.14)', fillOpacity: 1, interactive: false,
           }).addTo(map);
-          currentMarker = L.circleMarker([data.current.lat, data.current.lng], {
-            radius: 8, color: '#F5F7F4', weight: 2, fillColor: '${colors.brand}', fillOpacity: 1, interactive: false,
-          }).addTo(map);
+          // Player's own chosen avatar (photo or preset emoji) as the map
+          // marker, instead of a generic dot — a gold ring marks VIP the
+          // same way the Stats screen's avatar ring does.
+          var avatar = data.avatar || { emoji: '🧭', isVip: false };
+          var avatarInner = avatar.photoUrl
+            ? '<img src="' + avatar.photoUrl + '" />'
+            : '<span class="emoji">' + avatar.emoji + '</span>';
+          var avatarIcon = L.divIcon({
+            className: 'player-avatar-icon' + (avatar.isVip ? ' is-vip' : ''),
+            html: avatarInner,
+            iconSize: [34, 34],
+            iconAnchor: [17, 17],
+          });
+          currentMarker = L.marker([data.current.lat, data.current.lng], { icon: avatarIcon, interactive: false }).addTo(map);
         }
 
         // Common POIs deliberately use a different color (blue) than the

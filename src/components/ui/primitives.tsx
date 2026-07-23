@@ -103,14 +103,36 @@ export function QuestCard({ quest, compact = false }: { quest: Quest; compact?: 
   );
 }
 
-export function PrimaryButton({ label, icon = 'compass-outline', onPress, tone = 'brand' }: { label: string; icon?: React.ComponentProps<typeof MaterialCommunityIcons>['name']; onPress: () => void; tone?: 'brand' | 'danger' | 'surface' }) {
+export function PrimaryButton({
+  label,
+  icon = 'compass-outline',
+  onPress,
+  tone = 'brand',
+  disabled = false,
+}: {
+  label: string;
+  icon?: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
+  onPress: () => void;
+  tone?: 'brand' | 'danger' | 'surface';
+  disabled?: boolean;
+}) {
   const palette = tone === 'brand'
     ? { background: colors.brand, foreground: colors.onBrand }
     : tone === 'danger'
       ? { background: colors.danger, foreground: colors.textPrimary }
       : { background: colors.surfaceElevated, foreground: colors.textPrimary };
   return (
-    <Pressable accessibilityLabel={label} accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.primaryButton, { backgroundColor: palette.background, opacity: pressed ? 0.8 : 1 }]}>
+    <Pressable
+      accessibilityLabel={label}
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.primaryButton,
+        { backgroundColor: palette.background, opacity: disabled ? 0.5 : pressed ? 0.8 : 1 },
+      ]}
+    >
       <MaterialCommunityIcons color={palette.foreground} name={icon} size={22} />
       <Text style={[styles.primaryButtonText, { color: palette.foreground }]}>{label}</Text>
     </Pressable>

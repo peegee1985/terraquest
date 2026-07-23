@@ -40,6 +40,10 @@ export default defineSchema({
     // canChangeHandle reads this to enforce "once ever" (regular) / "twice
     // per rolling year" (VIP) without a separate table.
     handleChangeTimestamps: v.optional(v.array(v.number())),
+    // Same idea as handleChangeTimestamps but for avatar/photo changes —
+    // avatarRules.ts's canChangeAvatar enforces the identical once-ever
+    // (regular) / twice-per-year (VIP) limit against this array.
+    avatarChangeTimestamps: v.optional(v.array(v.number())),
     locale: v.string(),
     timezone: v.string(),
     // TQ-45: ISO 3166-1 alpha-2 country code, self-reported by the user —

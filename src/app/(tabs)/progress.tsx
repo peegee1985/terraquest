@@ -221,6 +221,16 @@ function ProgressContent({ profile }: { profile: MyProfile | null | undefined })
         ) : null}
       </LinearGradient>
 
+      {!profile?.isVip ? (
+        <Pressable accessibilityRole="button" onPress={() => router.push('/pricing')}>
+          <Card style={styles.vipUpsellCard}>
+            <MaterialCommunityIcons color="#F5C542" name="crown-outline" size={24} />
+            <Text style={styles.vipUpsellText}>Staň se VIP — vyšší XP a denní bonusy</Text>
+            <MaterialCommunityIcons color={colors.textDisabled} name="chevron-right" size={22} />
+          </Card>
+        </Pressable>
+      ) : null}
+
       <Pressable accessibilityRole="button" onPress={() => router.push('/leaderboard')}>
         <Card style={styles.leaderboardCard}>
           <MaterialCommunityIcons color={colors.brand} name="podium-gold" size={24} />
@@ -294,6 +304,8 @@ const styles = StyleSheet.create({
   heroMetaText: { ...typography.caption, color: colors.textSecondary },
   leaderboardCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   leaderboardText: { ...typography.h3, color: colors.textPrimary, flex: 1 },
+  vipUpsellCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, borderColor: 'rgba(245,197,66,0.4)' },
+  vipUpsellText: { ...typography.h3, color: colors.textPrimary, flex: 1 },
   stepsCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   stepsCardColumn: { gap: spacing.sm },
   stepsHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },

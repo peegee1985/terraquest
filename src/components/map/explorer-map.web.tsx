@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle } from 'react';
 import { StyleSheet, View } from 'react-native';
-import Svg, { Circle, G, Line, Path, Rect } from 'react-native-svg';
+import Svg, { Circle, ClipPath, Defs, G, Image as SvgImage, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
 
 import { buildFogGeometry, LatLng, ViewportBounds } from '@/domain/fog';
 import { TrackPoint } from '@/domain/types';
@@ -62,10 +62,16 @@ export const ExplorerMap = forwardRef<
     route: TrackPoint[];
     revealedCells: readonly string[];
     pois?: PoiMarker[];
+    avatarPhotoUrl?: string;
+    avatarEmoji?: string;
+    isVip?: boolean;
     onBoundsChange?: (bounds: ViewportBounds) => void;
     onMarkerPress?: (poiId: string) => void;
   }
->(function ExplorerMap({ route, revealedCells, pois = [], onBoundsChange, onMarkerPress }, ref) {
+>(function ExplorerMap(
+  { route, revealedCells, pois = [], avatarPhotoUrl, avatarEmoji = '🧭', isVip = false, onBoundsChange, onMarkerPress },
+  ref,
+) {
   // No real pan/zoom on this static SVG projection (bounds are always
   // route-derived — see boundsFromRoute above), so there's nothing to
   // recenter to. Exposed anyway so map.tsx's recenter button can call the
@@ -103,7 +109,24 @@ export const ExplorerMap = forwardRef<
         </G>
         <Path d={fogPath} fill={colors.fog} fillRule="evenodd" />
         <Path d={path} fill="none" stroke={colors.brand} strokeLinecap="round" strokeLinejoin="round" strokeWidth="7" />
-        <Circle cx="352" cy="162" fill={colors.brand} r="10" stroke="#F5F7F4" strokeWidth="4" />
+        {avatarPhotoUrl ? (
+          <>
+            <Defs>
+              <ClipPath id="playerAvatarClip">
+                <Circle cx="352" cy="162" r="14" />
+              </ClipPath>
+            </Defs>
+            <SvgImage clipPath="url(#playerAvatarClip)" height="28" href={avatarPhotoUrl} width="28" x="338" y="148" />
+            <Circle cx="352" cy="162" fill="none" r="14" stroke={isVip ? '#F5C542' : '#F5F7F4'} strokeWidth="3" />
+          </>
+        ) : (
+          <>
+            <Circle cx="352" cy="162" fill={colors.brand} r="14" stroke={isVip ? '#F5C542' : '#F5F7F4'} strokeWidth="3" />
+            <SvgText fill="#0B1016" fontSize="14" textAnchor="middle" x="352" y="167">
+              {avatarEmoji}
+            </SvgText>
+          </>
+        )}
         {pois.map((poi) => {
           const { x, y } = project(poi, bounds);
           const rare = poi.rarity === 'rare';

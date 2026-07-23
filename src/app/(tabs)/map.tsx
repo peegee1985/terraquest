@@ -10,6 +10,7 @@ import { PoiLayer, type PoiLayerState } from '../../components/map/poi-layer';
 
 import { PrimaryButton } from '@/components/ui/primitives';
 import { batteryIconName, formatBatteryPercent } from '@/domain/battery';
+import { avatarPresetById } from '@/domain/avatars';
 import type { ViewportBounds } from '@/domain/fog';
 import { formatTemperatureC, weatherCodeToSummary } from '@/domain/weather';
 import { useBattery } from '@/hooks/use-battery';
@@ -18,6 +19,7 @@ import { useWeather } from '@/hooks/use-weather';
 import { convex } from '@/state/convex-client';
 import { useExplorer } from '@/state/explorer-context';
 import type { PoiMarker } from '@/state/poi-client';
+import { useMyProfile } from '@/state/profile-client';
 import { colors, radii, spacing, typography } from '@/theme/tokens';
 
 /**
@@ -85,6 +87,12 @@ export default function MapScreen() {
   const router = useRouter();
   const { session, revealedCells, startSession, togglePause, finishSession } = useExplorer();
   const { isForegroundDenied, requestForeground } = useLocationPermissions();
+  const profile = useMyProfile();
+  const avatarProps = {
+    avatarPhotoUrl: profile?.avatarPhotoUrl,
+    avatarEmoji: avatarPresetById(profile?.avatarId ?? 'compass').emoji,
+    isVip: profile?.isVip ?? false,
+  };
   const mapRef = useRef<ExplorerMapHandle>(null);
   // Reported by ExplorerMap (Leaflet's moveend on native, route-derived on
   // web) — feeds the POI query's bounding box. Starts at a placeholder
@@ -157,11 +165,12 @@ export default function MapScreen() {
                 pois={pois}
                 revealedCells={revealedCells}
                 route={session.route}
+                {...avatarProps}
               />
             )}
           </PoiLayer>
         ) : (
-          <ExplorerMap ref={mapRef} onBoundsChange={setMapBounds} revealedCells={revealedCells} route={session.route} />
+          <ExplorerMap ref={mapRef} onBoundsChange={setMapBounds} revealedCells={revealedCells} route={session.route} {...avatarProps} />
         )}
 
         <View style={styles.topHud}>
