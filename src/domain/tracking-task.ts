@@ -15,6 +15,11 @@ export const LOCAL_SESSION_ID = 'primary';
 export { trackingProfileForMode };
 export type { TrackingProfile };
 
+function watchOptionsForProfile(profile: TrackingProfile): Location.LocationOptions {
+  const full = optionsForProfile(profile);
+  return { accuracy: full.accuracy, timeInterval: full.timeInterval, distanceInterval: full.distanceInterval };
+}
+
 function optionsForProfile(profile: TrackingProfile): Location.LocationTaskOptions {
   const precise = profile === 'precise';
   return {
@@ -62,19 +67,14 @@ function persistence() {
 
 type LocationTaskData = { locations: Location.LocationObject[] };
 
-// Registered at module scope, per TaskManager's requirement — this file must
-// be imported unconditionally very early (see src/app/_layout.tsx), since the
-// OS can invoke this task after restarting the app process with no React
-// tree mounted at all, e.g. to deliver a batch of background location
-// updates while the app was fully backgrounded.
-TaskManager.defineTask<LocationTaskData>(LOCATION_TRACKING_TASK_NAME, async ({ data, error }) => {
-  if (error || !data?.locations?.length) return;
+async function persistIncomingLocations(locations: Location.LocationObject[]): Promise<void> {
+  if (!locations.length) return;
   const db = await persistence();
   // The DB is the single source of truth for sequence numbers — a background
   // task invocation can't share in-memory state with whatever React state
   // (if any) is currently mounted, and doesn't need to.
   let sequence = await db.trackPoints.count(LOCAL_SESSION_ID);
-  for (const location of data.locations) {
+  for (const location of locations) {
     await db.trackPoints.insert({
       sessionId: LOCAL_SESSION_ID,
       sequence,
@@ -89,21 +89,83 @@ TaskManager.defineTask<LocationTaskData>(LOCATION_TRACKING_TASK_NAME, async ({ d
     sequence += 1;
   }
   await db.trackPoints.pruneToLast(LOCAL_SESSION_ID, 2000).catch(() => undefined);
+}
+
+// Registered at module scope, per TaskManager's requirement — this file must
+// be imported unconditionally very early (see src/app/_layout.tsx), since the
+// OS can invoke this task after restarting the app process with no React
+// tree mounted at all, e.g. to deliver a batch of background location
+// updates while the app was fully backgrounded.
+TaskManager.defineTask<LocationTaskData>(LOCATION_TRACKING_TASK_NAME, async ({ data, error }) => {
+  if (error || !data?.locations?.length) return;
+  await persistIncomingLocations(data.locations);
 });
+
+// TQ-21/TQ-31 REGRESSION FALLBACK (2026-07-23): expo-location's task-based
+// startLocationUpdatesAsync requires ACCESS_BACKGROUND_LOCATION ("Always")
+// the moment `foregroundService` isn't requested — LocationModule.kt's
+// startLocationUpdatesAsync throws LocationBackgroundUnauthorizedException
+// whenever `!shouldUseForegroundService && isMissingBackgroundPermissions()`.
+// Since removing `foregroundService` above (crash fix), and since TQ-20's
+// onboarding deliberately doesn't request "Always" until AFTER a user's
+// first completed session, a first-ever session held only foreground
+// permission and could never register the task at all — zero real GPS
+// points captured, silently swallowed by this module's .catch(() =>
+// undefined), falling back to demo data in the UI.
+//
+// watchPositionAsync only checks foreground permission (LocationModule.kt's
+// watchPositionImplAsync calls isMissingForegroundPermissions(), full stop)
+// and delivers via a direct JS callback rather than a PendingIntent/task, so
+// it works whenever the task-based API can't yet. It only reports updates
+// while the app process is alive in the foreground — same limitation the
+// task-based path already has without a foreground service — so once
+// background permission is eventually granted we switch back to the
+// task-based path, which registers as a pure background *service* (not a
+// foreground service) and doesn't hit the crash at all in that branch.
+let activeWatchSubscription: Location.LocationSubscription | null = null;
+
+async function hasBackgroundPermission(): Promise<boolean> {
+  const { status } = await Location.getBackgroundPermissionsAsync();
+  return status === Location.PermissionStatus.GRANTED;
+}
+
+async function stopWatchFallback(): Promise<void> {
+  activeWatchSubscription?.remove();
+  activeWatchSubscription = null;
+}
+
+async function startWatchFallback(profile: TrackingProfile): Promise<void> {
+  await stopWatchFallback();
+  activeWatchSubscription = await Location.watchPositionAsync(watchOptionsForProfile(profile), (location) => {
+    void persistIncomingLocations([location]);
+  });
+}
 
 export async function startLocationTracking(profile: TrackingProfile = 'precise'): Promise<void> {
   const { status } = await Location.getForegroundPermissionsAsync();
   if (status !== 'granted') return;
-  await Location.startLocationUpdatesAsync(LOCATION_TRACKING_TASK_NAME, optionsForProfile(profile)).catch(() => undefined);
+
+  if (await hasBackgroundPermission()) {
+    await stopWatchFallback();
+    await Location.startLocationUpdatesAsync(LOCATION_TRACKING_TASK_NAME, optionsForProfile(profile)).catch(() => undefined);
+    return;
+  }
+
+  await startWatchFallback(profile).catch(() => undefined);
 }
 
 export async function stopLocationTracking(): Promise<void> {
+  await stopWatchFallback();
   const started = await Location.hasStartedLocationUpdatesAsync(LOCATION_TRACKING_TASK_NAME).catch(() => false);
   if (started) await Location.stopLocationUpdatesAsync(LOCATION_TRACKING_TASK_NAME).catch(() => undefined);
 }
 
 /** Re-registers the same task with a different profile's options — expo-location updates an already-running task in place rather than erroring, so this is cheap and doesn't drop in-flight updates. */
 export async function updateLocationTrackingProfile(profile: TrackingProfile): Promise<void> {
+  if (activeWatchSubscription) {
+    await startWatchFallback(profile).catch(() => undefined);
+    return;
+  }
   const started = await Location.hasStartedLocationUpdatesAsync(LOCATION_TRACKING_TASK_NAME).catch(() => false);
   if (!started) return;
   await Location.startLocationUpdatesAsync(LOCATION_TRACKING_TASK_NAME, optionsForProfile(profile)).catch(() => undefined);
