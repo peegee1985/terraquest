@@ -47,9 +47,22 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      # eas-cli's build:inspect swallows the real error on failure (its own
+      # catch block only prints a generic hint, and only when --verbose is
+      # OFF — with --verbose ON, which we need for the native build's
+      # inherited stdout/stderr, a failure before that subprocess spawns
+      # produces zero output). Two runs of this workflow both "succeeded" in
+      # under 30s with no gradlew output at all — proof it's failing before
+      # ever reaching the native build, silently. Install a throwaway copy
+      # and patch that swallowing away so we can actually see why.
+      - name: Install and patch a scratch copy of eas-cli for debugging
+        run: |
+          npm install --no-save --prefix /tmp/eas-cli-local eas-cli@21.1.0
+          node scripts/eas-inspect-debug-patch.js /tmp/eas-cli-local/node_modules/eas-cli/build/commands/build/inspect.js
+
       - name: Run EAS post-build stage (runs Gradle locally, no credits consumed)
         run: >-
-          npx eas-cli@latest build:inspect
+          node /tmp/eas-cli-local/node_modules/eas-cli/bin/run build:inspect
           --platform android
           --stage post-build
           --profile preview
