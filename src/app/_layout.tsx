@@ -4,6 +4,8 @@ import { ReactNode, useEffect } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { AppErrorBoundary } from '@/components/app-error-boundary';
+import { LevelUpOverlay } from '@/components/level-up-overlay';
+import { useLevelUpCelebration } from '@/hooks/use-level-up-celebration';
 import { AuthProvider } from '@/state/auth-context';
 import { convex } from '@/state/convex-client';
 import { ExplorerProvider } from '@/state/explorer-context';
@@ -44,6 +46,12 @@ function BackendProvider({ children }: { children: ReactNode }) {
   return <AuthProvider client={convex}>{children}</AuthProvider>;
 }
 
+/** Only mounted when `convex` is truthy — useLevelUpCelebration's useMyProfile needs a ConvexProvider ancestor, same precondition as every other useMyProfile call site. */
+function LevelUpWatcher() {
+  const { event, dismiss } = useLevelUpCelebration();
+  return <LevelUpOverlay event={event} onDismiss={dismiss} />;
+}
+
 function RootLayout() {
   useEffect(() => {
     SplashScreen.hideAsync();
@@ -58,6 +66,7 @@ function RootLayout() {
               <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
                 <Stack.Screen name="(tabs)" />
               </Stack>
+              {convex ? <LevelUpWatcher /> : null}
             </ThemeProvider>
           </ExplorerProvider>
         </BackendProvider>
