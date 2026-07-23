@@ -1,6 +1,8 @@
 import { Component, type ReactNode } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { Sentry } from '@/state/sentry';
+
 type Props = { children: ReactNode };
 type State = { error: Error | null };
 
@@ -9,7 +11,10 @@ type State = { error: Error | null };
  * crashing error — an uncaught render error just closes the app with no
  * diagnostic trail. This renders the error message and stack on screen
  * instead, so a screenshot is enough to actually diagnose a crash rather
- * than guessing at the cause build after build.
+ * than guessing at the cause build after build. Only catches JS render
+ * errors within this React tree — a native-level process crash (e.g.
+ * expo-location's Android foreground-service code) never reaches this at
+ * all, which is what Sentry's native crash handler (initSentry()) is for.
  */
 export class AppErrorBoundary extends Component<Props, State> {
   state: State = { error: null };
@@ -20,6 +25,7 @@ export class AppErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: { componentStack?: string | null }) {
     console.error('[AppErrorBoundary]', error, info.componentStack);
+    Sentry.captureException(error, { contexts: { react: { componentStack: info.componentStack } } });
   }
 
   render() {

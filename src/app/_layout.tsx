@@ -6,6 +6,7 @@ import { AppErrorBoundary } from '@/components/app-error-boundary';
 import { AuthProvider } from '@/state/auth-context';
 import { convex } from '@/state/convex-client';
 import { ExplorerProvider } from '@/state/explorer-context';
+import { initSentry, Sentry } from '@/state/sentry';
 import { colors } from '@/theme/tokens';
 
 // TQ-21: registers the background location task. Must happen at module
@@ -13,6 +14,14 @@ import { colors } from '@/theme/tokens';
 // it restarts the app process with no screen mounted, just to deliver a
 // batch of background location updates.
 import '@/domain/tracking-task';
+
+// As early as possible — before the root component (or anything it renders)
+// runs — so a crash anywhere in the render tree still has a chance of being
+// reported instead of leaving zero diagnostic trail. Import statements
+// above are hoisted and run first regardless of this call's position, so
+// this can't protect against a crash during e.g. tracking-task.ts's own
+// module-scope registration, only against what runs after that.
+initSentry();
 
 SplashScreen.preventAutoHideAsync();
 
@@ -34,7 +43,7 @@ function BackendProvider({ children }: { children: ReactNode }) {
   return <AuthProvider client={convex}>{children}</AuthProvider>;
 }
 
-export default function RootLayout() {
+function RootLayout() {
   useEffect(() => {
     SplashScreen.hideAsync();
   }, []);
@@ -53,3 +62,7 @@ export default function RootLayout() {
     </AppErrorBoundary>
   );
 }
+
+// Sentry.wrap is a no-op passthrough when Sentry.init was never called (no
+// DSN configured), so this is safe to leave unconditional.
+export default Sentry.wrap(RootLayout);

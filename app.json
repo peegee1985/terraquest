@@ -48,6 +48,12 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 92
         }
+      ],
+      [
+        "@sentry/react-native/expo",
+        {
+          "disableAutoUpload": true
+        }
       ]
     ],
     "experiments": {
