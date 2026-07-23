@@ -32,30 +32,33 @@ function optionsForProfile(profile: TrackingProfile): Location.LocationTaskOptio
     // *captured* (written to SQLite), not from when the GPS fix occurred.
     deferredUpdatesInterval: precise ? 8000 : 20000,
     showsBackgroundLocationIndicator: true,
-    // TEMPORARY REGRESSION (2026-07-23) — deliberately NOT requesting a
-    // foreground service. expo-location's Android LocationTaskConsumer
-    // starts the foreground service from a ServiceConnection.onServiceConnected
-    // callback (LocationTaskConsumer.kt ~line 214-222) with zero exception
-    // handling around context.startForegroundService()/startForeground() —
-    // verified unchanged in both the installed 57.0.5 and latest 57.0.6.
-    // Any SecurityException/ForegroundServiceStartNotAllowedException there
-    // (a real, well-documented Android 12+/14 restriction on when a
-    // foreground service may be started) crashes the whole process, and
-    // since it fires from a system callback outside any JS await chain, no
-    // amount of try/catch on our side can intercept it — confirmed this was
-    // the actual cause of an on-device crash when starting a session, which
-    // then reproduced on every subsequent launch (explorer-context.tsx's
-    // crash-safe "resume an active session" hydration path replayed the
-    // exact same call). Omitting the `foregroundService` key makes
-    // expo-location skip that code path entirely (shouldUseForegroundService
-    // just checks whether the key exists).
+    // RESTORED (2026-07-23): requesting a foreground service is what keeps
+    // location updates flowing reliably once the app is backgrounded/screen-
+    // locked (TQ-21's "pokračuje v ukládání aktivní trasy, když je telefon
+    // zamčený" acceptance criterion) — and also happens to skip the
+    // ACCESS_BACKGROUND_LOCATION requirement entirely (LocationModule.kt's
+    // startLocationUpdatesAsync only demands it when foregroundService is
+    // absent), so a first-ever session (foreground permission only, per
+    // TQ-20's deferred "Always" request) can still register.
     //
-    // Real cost: without a foreground service, Android's background
-    // execution limits mean location updates stop reliably once the app is
-    // backgrounded/screen-locked — TQ-21's "pokračuje v ukládání aktivní
-    // trasy, když je telefon zamčený" acceptance criterion is NOT met while
-    // this is disabled. Re-enable once expo-location fixes this upstream, or
-    // this is replaced with a hardened custom implementation.
+    // This was previously removed because expo-location's
+    // LocationTaskConsumer.kt started the foreground service from a
+    // ServiceConnection.onServiceConnected callback with zero exception
+    // handling — any SecurityException/ForegroundServiceStartNotAllowedException
+    // there (a real, documented Android 12+/14 restriction) crashed the
+    // whole process uncatchably from JS. That's now patched at the source
+    // (see patches/expo-location+57.0.5.patch — applied automatically via
+    // the postinstall script) to catch and log instead of crash, falling
+    // back to plain (non-foreground) location delivery when the OS refuses
+    // to grant foreground elevation. startLocationTracking below still keeps
+    // a watchPositionAsync fallback as defense in depth in case task
+    // registration itself is rejected (e.g. ForegroundServiceStartNotAllowedException
+    // thrown at registration time, not just inside the service callback).
+    foregroundService: {
+      notificationTitle: 'TerraQuest',
+      notificationBody: 'Zaznamenává se tvůj průzkum',
+      killServiceOnDestroy: false,
+    },
   };
 }
 
@@ -101,33 +104,20 @@ TaskManager.defineTask<LocationTaskData>(LOCATION_TRACKING_TASK_NAME, async ({ d
   await persistIncomingLocations(data.locations);
 });
 
-// TQ-21/TQ-31 REGRESSION FALLBACK (2026-07-23): expo-location's task-based
-// startLocationUpdatesAsync requires ACCESS_BACKGROUND_LOCATION ("Always")
-// the moment `foregroundService` isn't requested — LocationModule.kt's
-// startLocationUpdatesAsync throws LocationBackgroundUnauthorizedException
-// whenever `!shouldUseForegroundService && isMissingBackgroundPermissions()`.
-// Since removing `foregroundService` above (crash fix), and since TQ-20's
-// onboarding deliberately doesn't request "Always" until AFTER a user's
-// first completed session, a first-ever session held only foreground
-// permission and could never register the task at all — zero real GPS
-// points captured, silently swallowed by this module's .catch(() =>
-// undefined), falling back to demo data in the UI.
-//
-// watchPositionAsync only checks foreground permission (LocationModule.kt's
-// watchPositionImplAsync calls isMissingForegroundPermissions(), full stop)
-// and delivers via a direct JS callback rather than a PendingIntent/task, so
-// it works whenever the task-based API can't yet. It only reports updates
-// while the app process is alive in the foreground — same limitation the
-// task-based path already has without a foreground service — so once
-// background permission is eventually granted we switch back to the
-// task-based path, which registers as a pure background *service* (not a
-// foreground service) and doesn't hit the crash at all in that branch.
+// DEFENSE IN DEPTH (2026-07-23): the task-based path above is now the
+// primary mechanism again (foregroundService restored), but registration
+// can still legitimately fail — e.g. ForegroundServiceStartNotAllowedException
+// thrown synchronously at registration time if AppForegroundedSingleton
+// isn't yet marked foregrounded (a real race on cold-start resume, see
+// explorer-context.tsx's crash-safe session hydration). Rather than
+// silently swallowing that and capturing zero GPS data for the whole
+// session (the bug this file was previously changed to fix), fall back to
+// watchPositionAsync — a direct JS callback that only needs foreground
+// permission and doesn't touch TaskManager/PendingIntent at all. It only
+// reports updates while the app process is alive in the foreground, so the
+// next startLocationTracking call (e.g. after a mode change re-registers,
+// or the next app launch) gets another chance at the full task-based path.
 let activeWatchSubscription: Location.LocationSubscription | null = null;
-
-async function hasBackgroundPermission(): Promise<boolean> {
-  const { status } = await Location.getBackgroundPermissionsAsync();
-  return status === Location.PermissionStatus.GRANTED;
-}
 
 async function stopWatchFallback(): Promise<void> {
   activeWatchSubscription?.remove();
@@ -145,10 +135,13 @@ export async function startLocationTracking(profile: TrackingProfile = 'precise'
   const { status } = await Location.getForegroundPermissionsAsync();
   if (status !== 'granted') return;
 
-  if (await hasBackgroundPermission()) {
+  try {
+    await Location.startLocationUpdatesAsync(LOCATION_TRACKING_TASK_NAME, optionsForProfile(profile));
     await stopWatchFallback();
-    await Location.startLocationUpdatesAsync(LOCATION_TRACKING_TASK_NAME, optionsForProfile(profile)).catch(() => undefined);
     return;
+  } catch {
+    // Registration itself was rejected — fall back below rather than
+    // capturing zero location data for this session.
   }
 
   await startWatchFallback(profile).catch(() => undefined);

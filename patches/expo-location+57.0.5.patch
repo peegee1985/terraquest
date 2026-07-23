@@ -1,0 +1,59 @@
+diff --git a/node_modules/expo-location/android/src/main/java/expo/modules/location/taskConsumers/LocationTaskConsumer.kt b/node_modules/expo-location/android/src/main/java/expo/modules/location/taskConsumers/LocationTaskConsumer.kt
+index b4f6c06..582382b 100644
+--- a/node_modules/expo-location/android/src/main/java/expo/modules/location/taskConsumers/LocationTaskConsumer.kt
++++ b/node_modules/expo-location/android/src/main/java/expo/modules/location/taskConsumers/LocationTaskConsumer.kt
+@@ -211,15 +211,37 @@ class LocationTaskConsumer(context: Context, taskManagerUtils: TaskManagerUtilsI
+       extras.putString("taskName", task.name)
+       extras.putBoolean("killService", serviceOptions.getBoolean("killServiceOnDestroy", false))
+       serviceIntent.putExtras(extras)
+-      context.startForegroundService(serviceIntent)
++      // TerraQuest patch: Android 12+/14 can refuse to start a foreground
++      // service (SecurityException / ForegroundServiceStartNotAllowedException)
++      // even when AppForegroundedSingleton.isForegrounded is true above —
++      // that flag only reflects this app's own Activity lifecycle, not every
++      // OS-side restriction on foreground service starts. This call, and
++      // startForeground() in onServiceConnected below, were previously
++      // unguarded; onServiceConnected in particular runs as an Android
++      // system callback with no JS/try-catch anywhere in its call stack, so
++      // an exception there crashed the whole process with nothing catchable
++      // from React Native. Wrapping both in try/catch keeps plain location
++      // delivery (still requested via requestLocationUpdates/PendingIntent
++      // in startLocationUpdates() above) working even when the OS denies
++      // foreground elevation, instead of taking the whole app down.
++      try {
++        context.startForegroundService(serviceIntent)
++      } catch (e: Exception) {
++        Log.e(TAG, "Failed to start foreground service, continuing without it.", e)
++        return
++      }
+       context.bindService(
+         serviceIntent,
+         object : ServiceConnection {
+           override fun onServiceConnected(name: ComponentName, service: IBinder) {
+             mService = (service as? ServiceBinder)?.service
+-            mService?.let {
+-              it.setParentContext(context)
+-              it.startForeground(serviceOptions)
++            try {
++              mService?.let {
++                it.setParentContext(context)
++                it.startForeground(serviceOptions)
++              }
++            } catch (e: Exception) {
++              Log.e(TAG, "Failed to promote to foreground, continuing without it.", e)
+             }
+           }
+ 
+@@ -232,7 +254,11 @@ class LocationTaskConsumer(context: Context, taskManagerUtils: TaskManagerUtilsI
+       )
+     } else {
+       // Restart the service with new service options.
+-      mService?.startForeground(options.getArguments(FOREGROUND_SERVICE_KEY).toBundle())
++      try {
++        mService?.startForeground(options.getArguments(FOREGROUND_SERVICE_KEY).toBundle())
++      } catch (e: Exception) {
++        Log.e(TAG, "Failed to restart foreground service, continuing without it.", e)
++      }
+     }
+   }
+ 
