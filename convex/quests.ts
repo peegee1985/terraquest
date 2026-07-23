@@ -158,16 +158,20 @@ async function applyUpdateQuestProgress(ctx: any, args: { questId: any; progress
  * TQ-31 adjacent: called from submitTrackingSession once a tracked session
  * ends, bumping every active quest (today's daily periodKey + this week's
  * weekly periodKey) whose metric this session actually produced evidence
- * for. `stepsCount` comes from Health Connect (TQ-46) when available;
- * callers pass 0 when it isn't (unavailable, permission not granted, or an
- * iOS device — Health Connect is Android-only), in which case a
- * movement-category "steps" quest simply doesn't progress, same as before
- * TQ-46 existed. Every other metric this project currently generates
- * (new_units, active_minutes, distance_m) is always covered.
+ * for. `steps` is deliberately excluded, even though TQ-46 (Health Connect)
+ * now has real step data available — the project's own TQ-46 brainstorm
+ * decision (2026-07-23) is explicit: "kroky zůstávají mimo XP ledger"
+ * (steps stay out of the XP ledger). Health Connect/HealthKit both accept
+ * manually-entered step data from other apps, making a raw step count
+ * trivially fakeable — unlike distance/exploration/active-minutes, which
+ * are only ever produced by this app's own GPS-derived evidence. A
+ * movement-category "steps" quest therefore never progresses via this
+ * path; TQ-46's actual reward mechanic is a separate goal-completion
+ * streak/badge track, isolated from awardXp, not built here.
  */
 export async function applyQuestProgressForSession(
   ctx: any,
-  args: { userId: any; now: number; distanceMeters: number; newExplorationUnitsCount: number; elapsedSeconds: number; stepsCount: number },
+  args: { userId: any; now: number; distanceMeters: number; newExplorationUnitsCount: number; elapsedSeconds: number },
 ): Promise<void> {
   const user = await ctx.db.get(args.userId);
   if (!user) return;
@@ -184,8 +188,7 @@ export async function applyQuestProgressForSession(
     if (metric === 'new_units') return args.newExplorationUnitsCount;
     if (metric === 'active_minutes') return activeMinutes;
     if (metric === 'distance_m') return args.distanceMeters;
-    if (metric === 'steps') return args.stepsCount;
-    return 0;
+    return 0; // 'steps' — intentionally never awarded XP; see comment above.
   };
 
   for (const quest of [...dailyRows, ...weeklyRows]) {

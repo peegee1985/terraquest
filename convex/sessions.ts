@@ -35,9 +35,12 @@ export const submitTrackingSession = mutation({
     elapsedSeconds: v.number(),
     distanceMeters: v.number(),
     newExplorationUnitsCount: v.number(),
-    // TQ-46: 0 when Health Connect is unavailable/permission not granted —
-    // the client never omits this, it just sends 0 (see health-connect.ts's
-    // getStepsBetween, which itself never throws and returns 0 the same way).
+    // TQ-46: feeds only the verifiedSteps lifetime stat below, never any
+    // XP/quest path (see the brainstorm decision quoted next to
+    // applyQuestProgressForSession's call site). 0 when Health Connect is
+    // unavailable/permission not granted — the client never omits this, it
+    // just sends 0 (see health-connect.ts's getStepsBetween, which itself
+    // never throws and returns 0 the same way).
     stepsCount: v.number(),
   },
   returns: v.object({
@@ -85,13 +88,17 @@ export const submitTrackingSession = mutation({
       await applyRecordQualifyingDay(ctx, { userId, now: args.endedAt });
     }
 
+    // stepsCount deliberately does NOT flow into applyQuestProgressForSession
+    // — see that function's own comment: TQ-46's brainstorm decision keeps
+    // steps out of the XP ledger entirely (Health Connect/HealthKit both
+    // accept manually-entered step data from other apps, making a raw step
+    // count trivially fakeable). It only feeds the verifiedSteps stat above.
     await applyQuestProgressForSession(ctx, {
       userId,
       now: args.endedAt,
       distanceMeters: Math.max(0, args.distanceMeters),
       newExplorationUnitsCount: Math.max(0, args.newExplorationUnitsCount),
       elapsedSeconds: Math.max(0, args.elapsedSeconds),
-      stepsCount: Math.max(0, args.stepsCount),
     });
 
     const stats = await ctx.db
