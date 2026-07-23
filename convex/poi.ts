@@ -11,6 +11,83 @@ import {
 import { awardXp } from './xpAward';
 import { gameDayKey } from './xpLedgerRules';
 
+const categoryValidator = v.union(
+  v.literal('nature'),
+  v.literal('culture'),
+  v.literal('viewpoint'),
+  v.literal('gastronomy'),
+  v.literal('sport'),
+  v.literal('history'),
+);
+
+/**
+ * TQ-29b: idempotent upsert keyed by sourceId (the external provider's own
+ * element id, e.g. "osm:node:12345") — called by syncPoiFromOverpass
+ * (poiSync.ts) via makeFunctionReference rather than a direct import,
+ * since it's invoked from an *action*, not another mutation (see poiSync.ts
+ * for why that needs a different call mechanism than awardXp's).
+ * Re-running a sync is always safe: an existing row is patched in place
+ * (name/location can drift as the source data changes), never duplicated.
+ */
+export const upsertPoiBatch = mutation({
+  args: {
+    pois: v.array(
+      v.object({
+        sourceId: v.string(),
+        name: v.string(),
+        category: categoryValidator,
+        rarity: v.union(v.literal('common'), v.literal('rare')),
+        latitude: v.number(),
+        longitude: v.number(),
+        discoveryRadiusMeters: v.number(),
+      }),
+    ),
+    now: v.number(),
+  },
+  returns: v.object({ inserted: v.number(), updated: v.number() }),
+  handler: async (ctx: any, args: any) => {
+    let inserted = 0;
+    let updated = 0;
+    for (const poi of args.pois) {
+      const existing = await ctx.db
+        .query('poi')
+        .withIndex('by_source', (q: any) => q.eq('sourceId', poi.sourceId))
+        .unique();
+
+      if (existing) {
+        await ctx.db.patch(existing._id, {
+          name: poi.name,
+          category: poi.category,
+          rarity: poi.rarity,
+          latitude: poi.latitude,
+          longitude: poi.longitude,
+          discoveryRadiusMeters: poi.discoveryRadiusMeters,
+          updatedAt: args.now,
+        });
+        updated += 1;
+      } else {
+        await ctx.db.insert('poi', {
+          sourceId: poi.sourceId,
+          name: poi.name,
+          category: poi.category,
+          rarity: poi.rarity,
+          latitude: poi.latitude,
+          longitude: poi.longitude,
+          discoveryRadiusMeters: poi.discoveryRadiusMeters,
+          // New rows default to safe/public — anything ingested here
+          // already passed poiSource.ts's allowlist categorization, which
+          // is the primary safety filter (see that module's comment).
+          safetyStatus: 'safe',
+          visibility: 'public',
+          updatedAt: args.now,
+        });
+        inserted += 1;
+      }
+    }
+    return { inserted, updated };
+  },
+});
+
 /**
  * TQ-29: verifies a first-visit POI discovery entirely server-side.
  *
