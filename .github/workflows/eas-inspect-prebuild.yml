@@ -41,11 +41,15 @@ jobs:
           --profile preview
           --output /tmp/eas-prebuild-output
           --force
+          --verbose
 
       - name: Locate and print the expo-location source referenced by the generated Gradle project
         run: |
           echo "=== settings.gradle expo-location reference ==="
-          grep -n "expo-location" /tmp/eas-prebuild-output/android/settings.gradle || echo "not found in settings.gradle"
+          grep -n "expo-location" /tmp/eas-prebuild-output/android/settings.gradle 2>&1 || echo "not found in settings.gradle"
           echo ""
           echo "=== Resolved path check ==="
           find /tmp/eas-prebuild-output -iname "LocationTaskConsumer.kt" -exec echo "Found: {}" \; -exec md5sum {} \; -exec grep -n "TerraQuest patch" {} \;
+          echo ""
+          echo "=== Top-level output dir listing (in case android/ wasn't generated) ==="
+          ls -la /tmp/eas-prebuild-output
