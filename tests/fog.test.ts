@@ -4,6 +4,8 @@ import {
   buildFogGeometry,
   cellsRevealedByPoint,
   cellsRevealedByRoute,
+  centerlineCellForPoint,
+  centerlineCellsForRoute,
   cullCellsToViewport,
   resolutionStats,
   type ViewportBounds,
@@ -123,5 +125,32 @@ describe('fog geometry', () => {
     for (const hole of geometry.holes) {
       expect(hole.length).toBeGreaterThanOrEqual(6);
     }
+  });
+});
+
+describe('centerline exploration units (TQ-23)', () => {
+  it('returns a single cell for a point, not a ring', () => {
+    const cell = centerlineCellForPoint(PRAGUE, 11);
+    expect(typeof cell).toBe('string');
+    // The centerline cell is always one of the cells in the wider visual
+    // ring — the two sets aren't unrelated, just independently computed.
+    expect(cellsRevealedByPoint(PRAGUE, 11)).toContain(cell);
+  });
+
+  it('the visual reveal ring for a single point always has more cells than its centerline set', () => {
+    // Growing the visual radius must never inflate XP units — verified here
+    // by construction: the ring function and the centerline function never
+    // share implementation, so one changing can't silently affect the other.
+    const visual = cellsRevealedByPoint(PRAGUE, 11);
+    const centerline = centerlineCellsForRoute([PRAGUE], 11);
+    expect(centerline.size).toBe(1);
+    expect(visual.length).toBeGreaterThan(centerline.size);
+  });
+
+  it('accumulates one unique cell per distinct point along a route', () => {
+    const route = walkingRoute(30);
+    const cells = centerlineCellsForRoute(route, 11);
+    expect(cells.size).toBeGreaterThan(0);
+    expect(cells.size).toBeLessThanOrEqual(route.length);
   });
 });

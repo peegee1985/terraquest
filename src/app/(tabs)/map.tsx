@@ -1,9 +1,8 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import * as Haptics from 'expo-haptics';
-import { useState } from 'react';
-import { Alert, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
+import { Alert, SafeAreaView, StyleSheet, Text, View } from 'react-native';
 
-import { ExplorerMap, FogMode } from '../../components/map/explorer-map';
+import { ExplorerMap } from '../../components/map/explorer-map';
 
 import { PrimaryButton } from '@/components/ui/primitives';
 import { useLocationPermissions } from '@/hooks/use-location-permissions';
@@ -17,11 +16,8 @@ function formatDuration(seconds: number) {
 }
 
 export default function MapScreen() {
-  const { session, startSession, togglePause, finishSession } = useExplorer();
+  const { session, revealedCells, startSession, togglePause, finishSession } = useExplorer();
   const { isForegroundDenied, requestForeground } = useLocationPermissions();
-  // TQ-17 prototype toggle: compares the current stroke-mask fog against the
-  // H3-grid reveal candidate for Fáze 3. Remove once TQ-23 picks a winner.
-  const [fogMode, setFogMode] = useState<FogMode>('demo');
 
   // TQ-21: location capture itself runs in a background task
   // (src/domain/tracking-task.ts), started/stopped by explorer-context —
@@ -49,7 +45,7 @@ export default function MapScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
-        <ExplorerMap fogMode={fogMode} route={session.route} />
+        <ExplorerMap revealedCells={revealedCells} route={session.route} />
 
         <View style={styles.topHud}>
           <View style={styles.brandBlock}>
@@ -59,14 +55,6 @@ export default function MapScreen() {
               <Text style={[styles.statusText, { color: status.color }]}>{status.label}</Text>
             </View>
           </View>
-          <Pressable
-            accessibilityLabel={fogMode === 'h3' ? 'Přepnout na demo mlhu' : 'Přepnout na H3 mlhu (prototyp)'}
-            accessibilityRole="button"
-            onPress={() => setFogMode((current) => (current === 'h3' ? 'demo' : 'h3'))}
-            style={[styles.iconButton, fogMode === 'h3' && styles.iconButtonActive]}
-          >
-            <MaterialCommunityIcons color={colors.textPrimary} name="layers-triple-outline" size={23} />
-          </Pressable>
         </View>
 
         {session.active ? (
@@ -116,8 +104,6 @@ const styles = StyleSheet.create({
   brand: { ...typography.label, color: colors.textPrimary, letterSpacing: 1.4 },
   statusRow: { flexDirection: 'row', gap: 6, alignItems: 'center', marginTop: 4 },
   statusText: { ...typography.caption },
-  iconButton: { width: 48, height: 48, borderRadius: 16, backgroundColor: 'rgba(7,17,26,0.92)', borderWidth: 1, borderColor: colors.outline, alignItems: 'center', justifyContent: 'center' },
-  iconButtonActive: { borderColor: colors.brand },
   startPanel: { position: 'absolute', left: spacing.md, right: spacing.md, bottom: spacing.md, backgroundColor: 'rgba(7,17,26,0.96)', borderColor: colors.outline, borderWidth: 1, borderRadius: radii.xl, padding: spacing.md, gap: spacing.md },
   startCopy: { gap: 4 },
   startTitle: { ...typography.h2, color: colors.textPrimary },

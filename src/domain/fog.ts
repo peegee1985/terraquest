@@ -134,6 +134,27 @@ export function cellsRevealedByRoute(route: readonly TrackPoint[], resolution: F
   return cells;
 }
 
+/**
+ * TQ-23: the single hex cell a point actually falls in — deliberately
+ * narrower than cellsRevealedByPoint's ring, and computed independently of
+ * it. This is what counts as an "exploration unit" for XP (docs 03:
+ * "průzkumná jednotka" = normalized cell intersected by the route's own
+ * centerline), so growing the wider visual reveal ring can never inflate
+ * XP — the two are separate cell sets by construction, not just by flag.
+ */
+export function centerlineCellForPoint(point: TrackPoint, resolution: FogResolution = RESOLUTION): string {
+  const size = EDGE_LENGTH_METERS[resolution];
+  const { x, y } = latLngToMeters(point);
+  const center = metersToAxial(x, y, size);
+  return encodeCell(resolution, center);
+}
+
+export function centerlineCellsForRoute(route: readonly TrackPoint[], resolution: FogResolution = RESOLUTION): Set<string> {
+  const cells = new Set<string>();
+  for (const point of route) cells.add(centerlineCellForPoint(point, resolution));
+  return cells;
+}
+
 const HEXAGON_CORNER_COUNT = 6;
 /** Pointy-top hexagon corners start 30° off the x-axis. */
 const CORNER_ANGLE_OFFSET_DEGREES = -30;

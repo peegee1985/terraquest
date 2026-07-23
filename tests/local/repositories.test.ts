@@ -151,6 +151,49 @@ describe('explored cell repository', () => {
     expect(cell.last_seen).toBe(2000);
     expect(cell.first_seen).toBe(1000);
   });
+
+  it('defaults a fresh cell to visual-only, not counting for XP', async () => {
+    const cells = createExploredCellRepository(db);
+    await cells.upsertSeen({ h3Index: 'cell-visual', seenAt: 1000, modeBit: 0b01, sourceSessionId: 'primary' });
+
+    const [cell] = await cells.listPendingSync();
+    expect(cell.visual_only).toBe(1);
+    expect(cell.normalized_for_xp).toBe(0);
+  });
+
+  it('promotes a cell to normalized_for_xp and never reverts it (TQ-23: growing the visual radius must never affect XP units)', async () => {
+    const cells = createExploredCellRepository(db);
+    await cells.upsertSeen({ h3Index: 'cell-2', seenAt: 1000, modeBit: 0b01, sourceSessionId: 'primary' });
+    await cells.upsertSeen({ h3Index: 'cell-2', seenAt: 2000, modeBit: 0b01, sourceSessionId: 'primary', normalizedForXp: true });
+
+    let [cell] = await cells.listPendingSync();
+    expect(cell.normalized_for_xp).toBe(1);
+    expect(cell.visual_only).toBe(0);
+
+    // A later purely-visual re-visit (e.g. a bike pass through the same
+    // cell) must not un-promote it.
+    await cells.upsertSeen({ h3Index: 'cell-2', seenAt: 3000, modeBit: 0b100, sourceSessionId: 'primary' });
+    [cell] = await cells.listPendingSync();
+    expect(cell.normalized_for_xp).toBe(1);
+  });
+
+  it('listAllCellIds returns every revealed cell regardless of sync state', async () => {
+    const cells = createExploredCellRepository(db);
+    await cells.upsertSeen({ h3Index: 'cell-a', seenAt: 1000, modeBit: 0b01, sourceSessionId: 'primary' });
+    await cells.upsertSeen({ h3Index: 'cell-b', seenAt: 1000, modeBit: 0b01, sourceSessionId: 'primary' });
+    await cells.markSynced(['cell-a']);
+
+    const all = await cells.listAllCellIds();
+    expect(all.sort()).toEqual(['cell-a', 'cell-b']);
+  });
+
+  it('countNormalizedForXp only counts promoted cells', async () => {
+    const cells = createExploredCellRepository(db);
+    await cells.upsertSeen({ h3Index: 'cell-x', seenAt: 1000, modeBit: 0b01, sourceSessionId: 'primary', normalizedForXp: true });
+    await cells.upsertSeen({ h3Index: 'cell-y', seenAt: 1000, modeBit: 0b01, sourceSessionId: 'primary' });
+
+    expect(await cells.countNormalizedForXp()).toBe(1);
+  });
 });
 
 describe('transactional atomicity', () => {

@@ -2,8 +2,9 @@ import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, 
 
 import { demoQuests, demoRoute, demoSnapshot } from '@/data/demo';
 import { getLocalPersistence, type LocalPersistence } from '@/data/local';
+import { cellsRevealedByRoute, centerlineCellsForRoute } from '@/domain/fog';
 import { filterRoute } from '@/domain/gps-filter';
-import { classifyMovement, computeRollingSpeedMps } from '@/domain/movement';
+import { classifyMovement, computeRollingSpeedMps, movementModeBit } from '@/domain/movement';
 import { MovementMode, Quest, TrackPoint } from '@/domain/types';
 import { LOCAL_SESSION_ID, startLocationTracking, stopLocationTracking } from '@/domain/tracking-task';
 
@@ -21,6 +22,7 @@ type ExplorerContextValue = {
   quests: Quest[];
   session: SessionState;
   hasCompletedSession: boolean;
+  revealedCells: string[];
   startSession: (mode?: MovementMode) => void;
   togglePause: () => void;
   finishSession: () => void;
@@ -30,8 +32,10 @@ const MAX_ROUTE_POINTS = 500;
 // TQ-21: while a session is active, re-read the route from the DB at the
 // same cadence the background task writes to it — this is what makes the
 // map reflect points regardless of whether they came from the foreground or
-// while the app was backgrounded.
-const ROUTE_REFRESH_INTERVAL_MS = 5000;
+// while the app was backgrounded. TQ-23's "lokální odhalení do 2 sekund"
+// acceptance criterion is what pulls this under 2000ms — it's just a local
+// SQLite read, decoupled from the location task's own 5s GPS sampling rate.
+const ROUTE_REFRESH_INTERVAL_MS = 1500;
 const EXTRA_SNAPSHOT_PREFERENCE_KEY = 'explorer.snapshot.extra.v1';
 // TQ-20: background location must not be offered until the user has
 // actually finished an expedition once — this flag gates that in Settings.
@@ -53,9 +57,14 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
   const [quests] = useState(demoQuests);
   const [session, setSession] = useState<SessionState>(initialSession);
   const [hasCompletedSession, setHasCompletedSession] = useState(false);
+  // TQ-23: cells ever revealed, loaded straight from local_explored_cell —
+  // this is what makes the fog persistent across sessions and app restarts,
+  // instead of resetting to only the current in-memory route each time.
+  const [revealedCells, setRevealedCells] = useState<string[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const persistenceRef = useRef<LocalPersistence | null>(null);
   const nextSequenceRef = useRef(0);
+  const modeRef = useRef<MovementMode>('walk');
 
   useEffect(() => {
     let cancelled = false;
@@ -65,15 +74,18 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         persistenceRef.current = persistence;
 
-        const [xpProjection, activeSession, storedRoute, extraSnapshotJson, hasCompletedSessionValue] = await Promise.all([
-          persistence.xpProjection.get(),
-          persistence.session.getActive(),
-          persistence.trackPoints.listBySession(LOCAL_SESSION_ID),
-          persistence.preferences.get(EXTRA_SNAPSHOT_PREFERENCE_KEY),
-          persistence.preferences.get(HAS_COMPLETED_SESSION_PREFERENCE_KEY),
-        ]);
+        const [xpProjection, activeSession, storedRoute, extraSnapshotJson, hasCompletedSessionValue, storedRevealedCells] =
+          await Promise.all([
+            persistence.xpProjection.get(),
+            persistence.session.getActive(),
+            persistence.trackPoints.listBySession(LOCAL_SESSION_ID),
+            persistence.preferences.get(EXTRA_SNAPSHOT_PREFERENCE_KEY),
+            persistence.preferences.get(HAS_COMPLETED_SESSION_PREFERENCE_KEY),
+            persistence.exploredCells.listAllCellIds(),
+          ]);
         if (cancelled) return;
         setHasCompletedSession(hasCompletedSessionValue === 'true');
+        setRevealedCells(storedRevealedCells);
 
         // TQ-22: filter on read too — points written before this filter
         // existed (or a background-task edge case) could still carry a jump.
@@ -93,6 +105,7 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
         setSnapshot((current) => ({ ...current, ...extraSnapshot, totalXp: xpProjection.confirmed_xp || current.totalXp }));
 
         if (activeSession) {
+          modeRef.current = activeSession.mode;
           setSession({
             active: activeSession.status === 'active' || activeSession.status === 'paused',
             paused: activeSession.status === 'paused',
@@ -153,8 +166,9 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
     if (!session.active || session.paused) return;
     let cancelled = false;
     const refresh = async () => {
-      const rows = await persistenceRef.current?.trackPoints.listBySession(LOCAL_SESSION_ID);
-      if (cancelled || !rows || rows.length === 0) return;
+      const persistence = persistenceRef.current;
+      const rows = await persistence?.trackPoints.listBySession(LOCAL_SESSION_ID);
+      if (cancelled || !persistence || !rows || rows.length === 0) return;
       nextSequenceRef.current = rows.length;
       // TQ-22: a single bad GPS sample (jump/teleport) must not damage the
       // displayed route or feed a bogus speed into movement classification.
@@ -167,7 +181,33 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
         })),
       );
       const speedMps = computeRollingSpeedMps(route);
-      setSession((current) => ({ ...current, route, mode: classifyMovement(speedMps, current.mode) }));
+      const mode = classifyMovement(speedMps, modeRef.current);
+      modeRef.current = mode;
+      setSession((current) => ({ ...current, route, mode }));
+
+      // TQ-23: two independent cell sets from the same filtered route — a
+      // wide visual reveal ring (cellsRevealedByRoute) and a narrow
+      // centerline set that only counts for XP, and only while the detected
+      // mode is walk/run (docs 03: kolo/vozidlo mají 0 pěších jednotek).
+      // Persisting on every poll (not just at session end) is what makes
+      // the fog reveal "within 2 seconds" instead of only after finishing.
+      const seenAt = Date.now();
+      const modeBit = movementModeBit(mode);
+      const visualCells = cellsRevealedByRoute(route);
+      const normalizedCells = mode === 'walk' || mode === 'run' ? centerlineCellsForRoute(route) : new Set<string>();
+      await Promise.all(
+        Array.from(visualCells).map((h3Index) =>
+          persistence.exploredCells.upsertSeen({
+            h3Index,
+            seenAt,
+            modeBit,
+            sourceSessionId: LOCAL_SESSION_ID,
+            normalizedForXp: normalizedCells.has(h3Index),
+          }),
+        ),
+      );
+      if (cancelled) return;
+      setRevealedCells(await persistence.exploredCells.listAllCellIds());
     };
     const interval = setInterval(() => void refresh(), ROUTE_REFRESH_INTERVAL_MS);
     void refresh();
@@ -197,6 +237,7 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
 
   const startSession = useCallback(
     (mode: MovementMode = 'walk') => {
+      modeRef.current = mode;
       setSession((current) => {
         const next: SessionState = { ...current, active: true, paused: false, mode, startedAt: Date.now(), elapsedSeconds: 0 };
         persistSession(next, 'active');
@@ -231,8 +272,8 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
   }, [persistSession]);
 
   const value = useMemo(
-    () => ({ snapshot, quests, session, hasCompletedSession, startSession, togglePause, finishSession }),
-    [finishSession, hasCompletedSession, quests, session, snapshot, startSession, togglePause],
+    () => ({ snapshot, quests, session, hasCompletedSession, revealedCells, startSession, togglePause, finishSession }),
+    [finishSession, hasCompletedSession, quests, revealedCells, session, snapshot, startSession, togglePause],
   );
 
   return <ExplorerContext.Provider value={value}>{children}</ExplorerContext.Provider>;

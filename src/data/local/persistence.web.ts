@@ -91,19 +91,28 @@ function createInMemoryPersistence(): LocalPersistence {
     exploredCells: {
       async upsertSeen(input) {
         const existing = exploredCells.get(input.h3Index);
+        // TQ-23: normalized_for_xp is sticky (OR across calls) — mirrors the
+        // native repository's MAX-on-conflict update.
+        const normalizedForXp = existing?.normalized_for_xp === 1 || input.normalizedForXp ? 1 : 0;
         exploredCells.set(input.h3Index, {
           h3_index: input.h3Index,
           first_seen: existing?.first_seen ?? input.seenAt,
           last_seen: input.seenAt,
           mode_mask: (existing?.mode_mask ?? 0) | input.modeBit,
-          sync_state: 'pending',
+          sync_state: existing?.sync_state ?? 'pending',
           source_session_id: input.sourceSessionId,
-          visual_only: input.visualOnly === false ? 0 : 1,
-          normalized_for_xp: existing?.normalized_for_xp ?? 0,
+          visual_only: normalizedForXp === 1 ? 0 : input.visualOnly === false ? 0 : 1,
+          normalized_for_xp: normalizedForXp,
         });
       },
       async listPendingSync() {
         return [...exploredCells.values()].filter((cell) => cell.sync_state === 'pending');
+      },
+      async listAllCellIds() {
+        return [...exploredCells.keys()];
+      },
+      async countNormalizedForXp() {
+        return [...exploredCells.values()].filter((cell) => cell.normalized_for_xp === 1).length;
       },
       async markSynced(h3Indexes) {
         for (const h3Index of h3Indexes) {

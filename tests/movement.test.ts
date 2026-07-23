@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { classifyMovement, computeRollingSpeedMps, DEFAULT_MOVEMENT_THRESHOLDS } from '../src/domain/movement';
+import { classifyMovement, computeRollingSpeedMps, DEFAULT_MOVEMENT_THRESHOLDS, movementModeBit } from '../src/domain/movement';
 import { TrackPoint } from '../src/domain/types';
 
 const BASE_LAT = 50.0875;
@@ -33,6 +33,18 @@ describe('classifyMovement', () => {
   it('never classifies below walk or above auto', () => {
     expect(classifyMovement(0, 'walk')).toBe('walk');
     expect(classifyMovement(100, 'auto')).toBe('auto');
+  });
+});
+
+describe('movementModeBit', () => {
+  it('gives each mode a distinct, OR-able bit', () => {
+    const bits = ['walk', 'run', 'bike', 'auto'] as const;
+    const values = bits.map((mode) => movementModeBit(mode));
+    expect(new Set(values).size).toBe(values.length);
+    for (const value of values) {
+      // Exactly one bit set.
+      expect(value & (value - 1)).toBe(0);
+    }
   });
 });
 

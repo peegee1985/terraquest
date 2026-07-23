@@ -52,6 +52,13 @@ export function classifyMovement(
   return MODES[index];
 }
 
+const MODE_BITS: Record<MovementMode, number> = { walk: 1, run: 2, bike: 4, auto: 8 };
+
+/** Bitmask value for local_explored_cell.mode_mask (docs 02) — ORed across every mode a cell has ever been seen in. */
+export function movementModeBit(mode: MovementMode): number {
+  return MODE_BITS[mode];
+}
+
 /** Average speed (m/s) over the last windowSize+1 points, derived from distance/time rather than trusting any single instantaneous GPS speed reading. */
 export function computeRollingSpeedMps(points: TrackPoint[], windowSize = 5): number {
   const relevant = points.slice(-(windowSize + 1));

@@ -2,7 +2,7 @@ import { ComponentType, RefAttributes, useEffect, useMemo, useRef, useState } fr
 import { StyleSheet, View } from 'react-native';
 import RNWebView, { type WebViewMessageEvent, type WebViewProps } from 'react-native-webview';
 
-import { buildFogGeometry, cellsRevealedByRoute, LatLng, ViewportBounds } from '@/domain/fog';
+import { buildFogGeometry, LatLng, ViewportBounds } from '@/domain/fog';
 import { TrackPoint } from '@/domain/types';
 import { colors } from '@/theme/tokens';
 
@@ -11,27 +11,8 @@ import { colors } from '@/theme/tokens';
 // WebViewProps & undefined isn't usable). Recast to a normal component type.
 const WebView = RNWebView as unknown as ComponentType<WebViewProps & RefAttributes<RNWebView>>;
 
-export type FogMode = 'demo' | 'h3';
-
 const INITIAL_CENTER: [number, number] = [50.0893, 14.4226];
 const INITIAL_ZOOM = 15;
-
-/** Fixed backdrop for the demo fog — matches the old react-native-maps fogBoundary. */
-const DEMO_OUTER_RING: [number, number][] = [
-  [51.5, 12.0],
-  [51.5, 17.0],
-  [48.5, 17.0],
-  [48.5, 12.0],
-];
-
-function circleHoleRing(point: TrackPoint, radiusMeters = 25, points = 18): [number, number][] {
-  const latRadius = radiusMeters / 111_320;
-  const lngRadius = radiusMeters / (111_320 * Math.cos((point.latitude * Math.PI) / 180));
-  return Array.from({ length: points }, (_, index) => {
-    const angle = (index / points) * Math.PI * 2;
-    return [point.latitude + Math.sin(angle) * latRadius, point.longitude + Math.cos(angle) * lngRadius] as [number, number];
-  });
-}
 
 function ringToPairs(ring: LatLng[]): [number, number][] {
   return ring.map((point) => [point.latitude, point.longitude]);
@@ -50,38 +31,25 @@ const DEFAULT_BOUNDS: ViewportBounds = {
   maxLongitude: INITIAL_CENTER[1] + 0.01,
 };
 
-export function ExplorerMap({ route, fogMode = 'demo' }: { route: TrackPoint[]; fogMode?: FogMode }) {
+export function ExplorerMap({ route, revealedCells }: { route: TrackPoint[]; revealedCells: readonly string[] }) {
   const webviewRef = useRef<RNWebView>(null);
   const [ready, setReady] = useState(false);
-  // Reported by the Leaflet page on 'moveend' — only needed for H3 viewport
-  // culling; the demo fog uses a fixed backdrop and ignores this.
+  // Reported by the Leaflet page on 'moveend', used to cull the persisted
+  // cell set down to what's actually on screen (TQ-23: keeps the fog
+  // renderer fast regardless of how many cells have been discovered).
   const [bounds, setBounds] = useState<ViewportBounds>(DEFAULT_BOUNDS);
 
   const payload = useMemo<MapPayload>(() => {
     const routePairs = route.map((point) => [point.latitude, point.longitude] as [number, number]);
     const current = route.at(-1);
     const currentPayload = current ? { lat: current.latitude, lng: current.longitude } : null;
-
-    if (fogMode === 'h3') {
-      try {
-        const revealedCells = cellsRevealedByRoute(route);
-        const geometry = buildFogGeometry(revealedCells, bounds);
-        return {
-          route: routePairs,
-          current: currentPayload,
-          fog: { outerRing: ringToPairs(geometry.outerRing), holes: geometry.holes.map(ringToPairs) },
-        };
-      } catch (error) {
-        console.warn('[TQ-17] H3 fog prototype failed, falling back to demo fog', error);
-      }
-    }
-
+    const geometry = buildFogGeometry(revealedCells, bounds);
     return {
       route: routePairs,
       current: currentPayload,
-      fog: { outerRing: DEMO_OUTER_RING, holes: route.map((point) => circleHoleRing(point)) },
+      fog: { outerRing: ringToPairs(geometry.outerRing), holes: geometry.holes.map(ringToPairs) },
     };
-  }, [route, fogMode, bounds]);
+  }, [route, revealedCells, bounds]);
 
   useEffect(() => {
     if (!ready) return;
