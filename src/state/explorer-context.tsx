@@ -6,7 +6,14 @@ import { cellsRevealedByRoute, centerlineCellsForRoute } from '@/domain/fog';
 import { filterRoute } from '@/domain/gps-filter';
 import { classifyMovement, computeRollingSpeedMps, movementModeBit } from '@/domain/movement';
 import { MovementMode, Quest, TrackPoint } from '@/domain/types';
-import { LOCAL_SESSION_ID, startLocationTracking, stopLocationTracking } from '@/domain/tracking-task';
+import {
+  LOCAL_SESSION_ID,
+  startLocationTracking,
+  stopLocationTracking,
+  trackingProfileForMode,
+  updateLocationTrackingProfile,
+  type TrackingProfile,
+} from '@/domain/tracking-task';
 import {
   NOT_YET_CONFIGURED_TRANSPORT,
   processDueSyncEvents,
@@ -76,6 +83,10 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
   const persistenceRef = useRef<LocalPersistence | null>(null);
   const nextSequenceRef = useRef(0);
   const modeRef = useRef<MovementMode>('walk');
+  // TQ-25: tracks which tracking profile is currently applied so the
+  // refresh poll only calls updateLocationTrackingProfile on an actual
+  // change, not every 1.5s tick.
+  const trackingProfileRef = useRef<TrackingProfile>('precise');
 
   useEffect(() => {
     let cancelled = false;
@@ -117,6 +128,7 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
 
         if (activeSession) {
           modeRef.current = activeSession.mode;
+          trackingProfileRef.current = trackingProfileForMode(activeSession.mode);
           setSession({
             active: activeSession.status === 'active' || activeSession.status === 'paused',
             paused: activeSession.status === 'paused',
@@ -129,7 +141,7 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
           // mid-expedition, make sure the background task is actually running
           // again rather than assuming the OS kept it alive.
           if (activeSession.status === 'active') {
-            startLocationTracking().catch(() => undefined);
+            startLocationTracking(trackingProfileRef.current).catch(() => undefined);
           }
         } else {
           setSession((current) => ({ ...current, route }));
@@ -217,6 +229,15 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
       modeRef.current = mode;
       setSession((current) => ({ ...current, route, mode }));
 
+      // TQ-25: only switch the GPS profile on an actual mode change, not
+      // every poll — bike/auto earn 0.35x/0x XP anyway (progression.ts), so
+      // trading precision for battery life there costs nothing competitive.
+      const profile = trackingProfileForMode(mode);
+      if (profile !== trackingProfileRef.current) {
+        trackingProfileRef.current = profile;
+        updateLocationTrackingProfile(profile).catch(() => undefined);
+      }
+
       // TQ-23: two independent cell sets from the same filtered route — a
       // wide visual reveal ring (cellsRevealedByRoute) and a narrow
       // centerline set that only counts for XP, and only while the detected
@@ -270,12 +291,13 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
   const startSession = useCallback(
     (mode: MovementMode = 'walk') => {
       modeRef.current = mode;
+      trackingProfileRef.current = trackingProfileForMode(mode);
       setSession((current) => {
         const next: SessionState = { ...current, active: true, paused: false, mode, startedAt: Date.now(), elapsedSeconds: 0 };
         persistSession(next, 'active');
         return next;
       });
-      startLocationTracking().catch(() => undefined);
+      startLocationTracking(trackingProfileRef.current).catch(() => undefined);
     },
     [persistSession],
   );
@@ -285,7 +307,7 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
       const next = { ...current, paused: !current.paused };
       persistSession(next, next.paused ? 'paused' : 'active');
       if (next.paused) stopLocationTracking().catch(() => undefined);
-      else startLocationTracking().catch(() => undefined);
+      else startLocationTracking(trackingProfileRef.current).catch(() => undefined);
       return next;
     });
   }, [persistSession]);

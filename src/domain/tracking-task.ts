@@ -1,6 +1,8 @@
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 
+import { trackingProfileForMode, type TrackingProfile } from './tracking-profile';
+
 import { getLocalPersistence } from '@/data/local';
 
 export const LOCATION_TRACKING_TASK_NAME = 'terraquest-location-tracking';
@@ -10,17 +12,28 @@ export const LOCATION_TRACKING_TASK_NAME = 'terraquest-location-tracking';
 // background task and explorer-context.tsx so both write the same session.
 export const LOCAL_SESSION_ID = 'primary';
 
-export const LOCATION_TASK_OPTIONS: Location.LocationTaskOptions = {
-  accuracy: Location.Accuracy.High,
-  distanceInterval: 8,
-  timeInterval: 5000,
-  showsBackgroundLocationIndicator: true,
-  foregroundService: {
-    notificationTitle: 'TerraQuest',
-    notificationBody: 'Zaznamenává se tvůj průzkum',
-    killServiceOnDestroy: false,
-  },
-};
+export { trackingProfileForMode };
+export type { TrackingProfile };
+
+function optionsForProfile(profile: TrackingProfile): Location.LocationTaskOptions {
+  const precise = profile === 'precise';
+  return {
+    accuracy: precise ? Location.Accuracy.High : Location.Accuracy.Balanced,
+    distanceInterval: precise ? 8 : 30,
+    timeInterval: precise ? 5000 : 15000,
+    // Lets Android batch fixes and wake the CPU/radio less often instead of
+    // delivering every sample immediately — the fog-reveal-within-2s
+    // acceptance criterion (TQ-23) is measured from when a point is
+    // *captured* (written to SQLite), not from when the GPS fix occurred.
+    deferredUpdatesInterval: precise ? 8000 : 20000,
+    showsBackgroundLocationIndicator: true,
+    foregroundService: {
+      notificationTitle: 'TerraQuest',
+      notificationBody: 'Zaznamenává se tvůj průzkum',
+      killServiceOnDestroy: false,
+    },
+  };
+}
 
 let persistencePromise: ReturnType<typeof getLocalPersistence> | null = null;
 function persistence() {
@@ -59,13 +72,20 @@ TaskManager.defineTask<LocationTaskData>(LOCATION_TRACKING_TASK_NAME, async ({ d
   await db.trackPoints.pruneToLast(LOCAL_SESSION_ID, 2000).catch(() => undefined);
 });
 
-export async function startLocationTracking(): Promise<void> {
+export async function startLocationTracking(profile: TrackingProfile = 'precise'): Promise<void> {
   const { status } = await Location.getForegroundPermissionsAsync();
   if (status !== 'granted') return;
-  await Location.startLocationUpdatesAsync(LOCATION_TRACKING_TASK_NAME, LOCATION_TASK_OPTIONS).catch(() => undefined);
+  await Location.startLocationUpdatesAsync(LOCATION_TRACKING_TASK_NAME, optionsForProfile(profile)).catch(() => undefined);
 }
 
 export async function stopLocationTracking(): Promise<void> {
   const started = await Location.hasStartedLocationUpdatesAsync(LOCATION_TRACKING_TASK_NAME).catch(() => false);
   if (started) await Location.stopLocationUpdatesAsync(LOCATION_TRACKING_TASK_NAME).catch(() => undefined);
+}
+
+/** Re-registers the same task with a different profile's options — expo-location updates an already-running task in place rather than erroring, so this is cheap and doesn't drop in-flight updates. */
+export async function updateLocationTrackingProfile(profile: TrackingProfile): Promise<void> {
+  const started = await Location.hasStartedLocationUpdatesAsync(LOCATION_TRACKING_TASK_NAME).catch(() => false);
+  if (!started) return;
+  await Location.startLocationUpdatesAsync(LOCATION_TRACKING_TASK_NAME, optionsForProfile(profile)).catch(() => undefined);
 }
