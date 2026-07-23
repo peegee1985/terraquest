@@ -23,8 +23,8 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
     // existing user only via a *verified* email/phone match. That default
     // would create a brand-new user for every "upgrade guest to real
     // account" sign-up, discarding all of the anonymous user's server-side
-    // progress. This callback instead detects "the caller is currently
-    // signed in as an anonymous guest and is adding a first real
+    // progress. This callback instead detects "the sign-in flow was started
+    // from an active anonymous guest session and is adding a first real
     // credential" and reuses that same user document in place.
     async createOrUpdateUser(ctx, args) {
       const identityFields = authIdentityFields(args.profile);
@@ -37,13 +37,26 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
         return args.existingUserId;
       }
 
-      // No existing account for this credential yet. If the request is
-      // already authenticated as an anonymous guest, this is an "upgrade"
-      // (e.g. guest adds an email/password or Google account) rather than a
-      // fresh sign-up: attach the new credential's identity fields to the
-      // SAME user document so local/server progress tied to that user ID
-      // carries over untouched, and flip `isAnonymous` off.
-      const currentUserId = await getAuthUserId(ctx);
+      // No existing account for this credential yet. If the sign-in flow
+      // was started from an active anonymous guest session, this is an
+      // "upgrade" (e.g. guest adds an email/password or Google account)
+      // rather than a fresh sign-up: attach the new credential's identity
+      // fields to the SAME user document so local/server progress tied to
+      // that user ID carries over untouched, and flip `isAnonymous` off.
+      //
+      // `existingSessionId` (patches/@convex-dev+auth+0.0.94.patch forwards
+      // it to this callback) is the only reliable way to find that guest
+      // session for OAuth providers: the OAuth linking step runs from
+      // Google's HTTP redirect callback, which carries no bearer token at
+      // all, so `getAuthUserId(ctx)` always returns null there even when a
+      // guest session genuinely started the flow — that gap meant Google
+      // sign-in could never actually recover a guest's prior progress.
+      // `getAuthUserId(ctx)` is kept as a fallback for any provider that
+      // (unlike OAuth) does run this callback from the original
+      // authenticated client call.
+      const currentUserId: any = args.existingSessionId
+        ? ((await ctx.db.get(args.existingSessionId)) as any)?.userId ?? null
+        : await getAuthUserId(ctx);
       if (currentUserId !== null) {
         const currentUser = await ctx.db.get(currentUserId);
         if (currentUser !== null && currentUser.isAnonymous) {

@@ -22,23 +22,30 @@ export function AuthProvider({ client, children }: { client: ConvexReactClient; 
 }
 
 /**
- * Bootstraps a guest session on first launch so the app is always
- * authenticated (required for the SQLite <-> Convex sync path landing in
- * TQ-19+). Once a device has signed in — guest or upgraded — the token
- * persists in secure storage, so this never fires again on that device.
+ * Bootstraps a guest session whenever the app is unauthenticated — on first
+ * launch (required for the SQLite <-> Convex sync path landing in TQ-19+),
+ * but also after an explicit sign-out. `inFlight` only guards against firing
+ * twice concurrently for the same unauthenticated state; it is NOT a
+ * one-shot latch, since that previously left a signed-out device stuck with
+ * `isAuthenticated: false` forever (no automatic re-arm, and no sign-in form
+ * reachable from account.tsx's `isGuest` check, which itself requires
+ * `isAuthenticated`) until the process was killed and relaunched.
  */
 function AutoGuestSignIn() {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const { signIn } = useAuthActions();
-  const attempted = useRef(false);
+  const inFlight = useRef(false);
 
   useEffect(() => {
-    if (isLoading || isAuthenticated || attempted.current) return;
-    attempted.current = true;
-    signIn('anonymous').catch((error: unknown) => {
-      attempted.current = false;
-      console.warn('TerraQuest: automatic guest sign-in failed', error);
-    });
+    if (isLoading || isAuthenticated || inFlight.current) return;
+    inFlight.current = true;
+    signIn('anonymous')
+      .catch((error: unknown) => {
+        console.warn('TerraQuest: automatic guest sign-in failed', error);
+      })
+      .finally(() => {
+        inFlight.current = false;
+      });
   }, [isLoading, isAuthenticated, signIn]);
 
   return null;
