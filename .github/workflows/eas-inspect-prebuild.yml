@@ -1,0 +1,52 @@
+name: EAS Pre-build Inspect (free, no build credits)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Confirm patch-package applied to expo-location
+        run: |
+          echo "Checksum of the patched file after npm ci's postinstall:"
+          md5sum node_modules/expo-location/android/src/main/java/expo/modules/location/taskConsumers/LocationTaskConsumer.kt
+          echo "---"
+          echo "Relevant lines (should show the TerraQuest patch try/catch):"
+          grep -n "TerraQuest patch\|try {\|catch (e: Exception)" node_modules/expo-location/android/src/main/java/expo/modules/location/taskConsumers/LocationTaskConsumer.kt
+
+      - name: Run EAS pre-build stage (no Gradle/Xcode build, no credits consumed)
+        run: >-
+          npx eas-cli@latest build:inspect
+          --platform android
+          --stage pre-build
+          --profile preview
+          --output /tmp/eas-prebuild-output
+          --force
+          --non-interactive
+
+      - name: Locate and print the expo-location source referenced by the generated Gradle project
+        run: |
+          echo "=== settings.gradle expo-location reference ==="
+          grep -n "expo-location" /tmp/eas-prebuild-output/android/settings.gradle || echo "not found in settings.gradle"
+          echo ""
+          echo "=== Resolved path check ==="
+          find /tmp/eas-prebuild-output -iname "LocationTaskConsumer.kt" -exec echo "Found: {}" \; -exec md5sum {} \; -exec grep -n "TerraQuest patch" {} \;
