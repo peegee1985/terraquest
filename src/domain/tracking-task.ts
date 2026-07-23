@@ -27,11 +27,30 @@ function optionsForProfile(profile: TrackingProfile): Location.LocationTaskOptio
     // *captured* (written to SQLite), not from when the GPS fix occurred.
     deferredUpdatesInterval: precise ? 8000 : 20000,
     showsBackgroundLocationIndicator: true,
-    foregroundService: {
-      notificationTitle: 'TerraQuest',
-      notificationBody: 'Zaznamenává se tvůj průzkum',
-      killServiceOnDestroy: false,
-    },
+    // TEMPORARY REGRESSION (2026-07-23) — deliberately NOT requesting a
+    // foreground service. expo-location's Android LocationTaskConsumer
+    // starts the foreground service from a ServiceConnection.onServiceConnected
+    // callback (LocationTaskConsumer.kt ~line 214-222) with zero exception
+    // handling around context.startForegroundService()/startForeground() —
+    // verified unchanged in both the installed 57.0.5 and latest 57.0.6.
+    // Any SecurityException/ForegroundServiceStartNotAllowedException there
+    // (a real, well-documented Android 12+/14 restriction on when a
+    // foreground service may be started) crashes the whole process, and
+    // since it fires from a system callback outside any JS await chain, no
+    // amount of try/catch on our side can intercept it — confirmed this was
+    // the actual cause of an on-device crash when starting a session, which
+    // then reproduced on every subsequent launch (explorer-context.tsx's
+    // crash-safe "resume an active session" hydration path replayed the
+    // exact same call). Omitting the `foregroundService` key makes
+    // expo-location skip that code path entirely (shouldUseForegroundService
+    // just checks whether the key exists).
+    //
+    // Real cost: without a foreground service, Android's background
+    // execution limits mean location updates stop reliably once the app is
+    // backgrounded/screen-locked — TQ-21's "pokračuje v ukládání aktivní
+    // trasy, když je telefon zamčený" acceptance criterion is NOT met while
+    // this is disabled. Re-enable once expo-location fixes this upstream, or
+    // this is replaced with a hardened custom implementation.
   };
 }
 
