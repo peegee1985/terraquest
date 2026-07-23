@@ -60,9 +60,14 @@ jobs:
           npm install --no-save --prefix /tmp/eas-cli-local eas-cli@21.1.0
           node scripts/eas-inspect-debug-patch.js /tmp/eas-cli-local/node_modules/eas-cli/build/commands/build/inspect.js
 
+      # build:inspect hardcodes nonInteractive:false, so it always tries an
+      # interactive confirm ("install expo-updates and configure EAS Update
+      # now?") unrelated to the actual native build — and dies instantly in
+      # CI where stdin isn't a real terminal. Answering "n" on stdin lets it
+      # get past that gate to the real native build attempt.
       - name: Run EAS post-build stage (runs Gradle locally, no credits consumed)
         run: >-
-          node /tmp/eas-cli-local/node_modules/eas-cli/bin/run build:inspect
+          echo "n" | node /tmp/eas-cli-local/node_modules/eas-cli/bin/run build:inspect
           --platform android
           --stage post-build
           --profile preview
