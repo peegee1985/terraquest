@@ -31,6 +31,11 @@ export default defineSchema({
     avatarId: v.string(),
     locale: v.string(),
     timezone: v.string(),
+    // TQ-45: ISO 3166-1 alpha-2 country code, self-reported by the user —
+    // powers the country leaderboard. Optional since existing users (and
+    // guests who haven't set it yet) have none; they simply don't appear on
+    // any country leaderboard until set.
+    country: v.optional(v.string()),
     status: v.union(v.literal('active'), v.literal('suspended'), v.literal('deletion_pending')),
     consentVersion: v.string(),
     createdAt: v.number(),
@@ -69,7 +74,30 @@ export default defineSchema({
     dailyQuestsClaimedCount: v.optional(v.number()),
     weeklyQuestsClaimedCount: v.optional(v.number()),
     updatedAt: v.number(),
-  }).index('by_user', ['userId']),
+  })
+    .index('by_user', ['userId'])
+    // TQ-45: totalXp/explorationUnits are only ever mutated by awardXp's
+    // confirmed-ledger recompute (xpAward.ts), never by anything boost- or
+    // client-supplied — ranking directly off these fields is what makes
+    // "žebříček řadí jen podle potvrzeného XP" a structural guarantee, not a
+    // filter that could be forgotten. Country isn't denormalized here
+    // (deliberately, per the docs' own "malý počet uživatelů → živý
+    // indexovaný dotaz stačí" note) — the country leaderboard scans this
+    // index and joins users.country per row instead; revisit only if that
+    // stops being cheap enough.
+    .index('by_total_xp', ['totalXp'])
+    .index('by_exploration_units', ['explorationUnits']),
+
+  // TQ-45: one-directional "lightweight" follow, keyed by handle — not the
+  // full bidirectional friendships/{friendshipId} system from docs 02
+  // (blocking, mutual requests, groups), which stays out of scope until
+  // scaling actually needs it. Existence of a (followerId, followingId) row
+  // is the idempotency check, same pattern as userAchievements/poiDiscoveries.
+  follows: defineTable({
+    followerId: v.id('users'),
+    followingId: v.id('users'),
+    createdAt: v.number(),
+  }).index('by_follower_following', ['followerId', 'followingId']),
 
   trackingSessions: defineTable({
     userId: v.id('users'),
