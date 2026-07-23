@@ -1,0 +1,43 @@
+name: EAS Post-build Inspect (free, no build credits)
+
+# Runs the actual Gradle assembly locally in CI (eas-cli's `build:inspect
+# --stage post-build`) instead of on EAS's cloud build workers — same
+# diagnostic technique as eas-inspect-prebuild.yml, one stage further.
+# EAS cloud builds only report a generic EAS_BUILD_UNKNOWN_GRADLE_ERROR with
+# no stack trace attached to the GraphQL response; this surfaces the real
+# Gradle failure output directly in the Actions log, for free.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run EAS post-build stage (runs Gradle locally, no credits consumed)
+        run: >-
+          npx eas-cli@latest build:inspect
+          --platform android
+          --stage post-build
+          --profile preview
+          --output /tmp/eas-postbuild-output
+          --force
+          --verbose
