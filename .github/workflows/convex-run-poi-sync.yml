@@ -1,0 +1,53 @@
+name: Run POI Overpass Sync
+
+# One-off/manually-triggered invocation of syncPoiFromOverpass (TQ-29b) —
+# not scheduled, since the public Overpass API's usage policy discourages
+# frequent or large automated queries. Runs against dev only; re-run
+# manually whenever a fresh seed/refresh of Prague POI data is wanted.
+
+on:
+  workflow_dispatch:
+    inputs:
+      south:
+        description: Optional bounding box override (south) — leave blank for the default central-Prague box
+        required: false
+      west:
+        description: Optional bounding box override (west)
+        required: false
+      north:
+        description: Optional bounding box override (north)
+        required: false
+      east:
+        description: Optional bounding box override (east)
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  run-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run syncPoiFromOverpass
+        shell: bash
+        run: |
+          ARGS='{}'
+          if [ -n "${{ inputs.south }}" ] || [ -n "${{ inputs.west }}" ] || [ -n "${{ inputs.north }}" ] || [ -n "${{ inputs.east }}" ]; then
+            ARGS=$(node -e "console.log(JSON.stringify({south: ${{ inputs.south || 'undefined' }}, west: ${{ inputs.west || 'undefined' }}, north: ${{ inputs.north || 'undefined' }}, east: ${{ inputs.east || 'undefined' }}}))")
+          fi
+          npx convex run poiSync:syncPoiFromOverpass "$ARGS"
