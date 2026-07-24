@@ -27,12 +27,14 @@ const ITEM_ICONS: Record<InventoryItemId, React.ComponentProps<typeof MaterialCo
   satellite_scan: 'satellite-variant',
 };
 
-// Instant-activate items — one tap here does the whole thing. Satellite
-// Scan is deliberately NOT in this set: it needs a map location, so its
-// "Použít na mapě" button below just navigates to the map's pick-a-spot
-// mode instead of activating anything from this screen. Typed as
-// Set<InventoryItemId> (a superset of ActivatableItemId, same string
-// literals) purely so .has(entry.itemId) below doesn't need a cast.
+// Instant-activate items — one tap here does the whole thing. satellite_scan
+// and memory_marker are deliberately NOT in this set: both need a map
+// location (Memory Marker also needs note text, gathered on the next
+// screen), so their "Použít na mapě" button (InventoryRow's mapPickItemId
+// check below) just navigates to the map's pick-a-spot mode instead of
+// activating anything from this screen. Typed as Set<InventoryItemId> (a
+// superset of ActivatableItemId, same string literals) purely so
+// .has(entry.itemId) below doesn't need a cast.
 const ACTIVATABLE_ITEMS = new Set<InventoryItemId>(['radius_boost_potion', 'xp_boost_potion', 'scanner_pulse']);
 
 function formatRemaining(expiresAt: number, now: number): string {
@@ -68,7 +70,11 @@ function InventoryRow({ entry }: { entry: InventoryEntry }) {
   const activateItem = useUseItem();
   const [busy, setBusy] = useState(false);
   const activatable = ACTIVATABLE_ITEMS.has(entry.itemId);
-  const isSatelliteScan = entry.itemId === 'satellite_scan';
+  // A narrowing check (not just MAP_PICK_ITEMS.has, which Sets don't narrow
+  // from) so the itemId handed to router.push below is the exact literal
+  // union expo-router's typed route params expects, not the wider
+  // InventoryItemId.
+  const mapPickItemId = entry.itemId === 'satellite_scan' || entry.itemId === 'memory_marker' ? entry.itemId : null;
 
   return (
     <View style={styles.row}>
@@ -77,12 +83,12 @@ function InventoryRow({ entry }: { entry: InventoryEntry }) {
         <Text style={styles.rowLabel}>{ITEM_LABELS[entry.itemId]}</Text>
         <Text style={styles.rowQuantity}>×{entry.quantity}</Text>
       </View>
-      {isSatelliteScan ? (
+      {mapPickItemId ? (
         <PrimaryButton
           disabled={entry.quantity === 0}
-          icon="satellite-variant"
+          icon={ITEM_ICONS[entry.itemId]}
           label="Použít na mapě"
-          onPress={() => router.push({ pathname: '/(tabs)/map', params: { activateSatelliteScan: '1' } })}
+          onPress={() => router.push({ pathname: '/(tabs)/map', params: { activatePick: mapPickItemId } })}
           tone="surface"
         />
       ) : activatable ? (

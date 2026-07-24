@@ -316,18 +316,21 @@ export default defineSchema({
   }).index('by_user_achievement', ['userId', 'achievementId']),
 
   // TQ-30: MVP inventory — one row per (userId, itemId), quantity-stacking.
-  // map_theme_token/memory_marker are still inert collectibles — sitting in
-  // inventory, they never feed an XP/ranking computation ("itemy nemění
-  // leaderboard"). Everything else here IS activatable via items.ts's
-  // useItem: radius_boost_potion/xp_boost_potion/scanner_pulse consume one
-  // and write a temporary effect into userStats' activeRadiusBoost*/
-  // activeXpBoost* fields (which fog reveal / awardXp DO read); satellite_scan
-  // consumes one and triggers a pure client-side fog reveal (never touches
-  // userStats — see items.ts's SATELLITE_SCAN_ITEM_ID). The guarantee still
-  // holds for an unused item sitting here, it just isn't inert once spent.
-  // Rest Day Token keeps using userStats's dedicated restTokens counter
-  // from TQ-28 rather than migrating into this table — that mechanic
-  // already ships and works, so it's left alone.
+  // map_theme_token is still a truly inert collectible — sitting in
+  // inventory, it never feeds an XP/ranking computation ("itemy nemění
+  // leaderboard"). Everything else here IS activatable: radius_boost_potion/
+  // xp_boost_potion/scanner_pulse (items.ts's useItem) consume one and write
+  // a temporary effect into userStats' activeRadiusBoost*/activeXpBoost*
+  // fields (which fog reveal / awardXp DO read); satellite_scan (also
+  // useItem) consumes one and triggers a pure client-side fog reveal (never
+  // touches userStats); memory_marker (memoryMarkers.ts's placeMemoryMarker,
+  // a separate mutation since it needs a lat/lng/note payload useItem's
+  // {itemId}-only shape doesn't fit) consumes one and inserts a row into the
+  // memoryMarkers table below. The guarantee still holds for an unused item
+  // sitting here, it just isn't inert once spent. Rest Day Token keeps using
+  // userStats's dedicated restTokens counter from TQ-28 rather than
+  // migrating into this table — that mechanic already ships and works, so
+  // it's left alone.
   userInventoryItems: defineTable({
     userId: v.id('users'),
     itemId: v.union(
@@ -341,6 +344,19 @@ export default defineSchema({
     quantity: v.number(),
     updatedAt: v.number(),
   }).index('by_user_item', ['userId', 'itemId']),
+
+  // Memory Marker (convex/memoryMarkers.ts): a personal location note —
+  // "smile more" at a spot on your daily commute, "don't forget milk" at
+  // the grocery store. Always private to its owner (by_user index only, no
+  // visibility field like poi's) — this is a personal reminder, not
+  // shareable content, so there's no cross-user query path at all.
+  memoryMarkers: defineTable({
+    userId: v.id('users'),
+    latitude: v.number(),
+    longitude: v.number(),
+    note: v.string(),
+    createdAt: v.number(),
+  }).index('by_user', ['userId']),
 
   // TQ-34 (scoped MVP for a one-day delivery): a user-defined circle they
   // want kept out of anything shared/exported — "Export mých dat" redacts

@@ -19,11 +19,14 @@ function ringToPairs(ring: LatLng[]): [number, number][] {
   return ring.map((point) => [point.latitude, point.longitude]);
 }
 
+export type MemoryMarkerPoint = { markerId: string; latitude: number; longitude: number };
+
 type MapPayload = {
   route: [number, number][];
   current: { lat: number; lng: number } | null;
   fog: { outerRing: [number, number][]; holes: [number, number][][] };
   pois: { poiId: string; lat: number; lng: number; rarity: PoiMarker['rarity'] }[];
+  memoryMarkers: { markerId: string; lat: number; lng: number }[];
   avatar: { photoUrl?: string; emoji: string; isVip: boolean };
   pickMode: boolean;
 };
@@ -43,14 +46,18 @@ export const ExplorerMap = forwardRef<
     route: TrackPoint[];
     revealedCells: readonly string[];
     pois?: PoiMarker[];
+    memoryMarkers?: MemoryMarkerPoint[];
     avatarPhotoUrl?: string;
     avatarEmoji?: string;
     isVip?: boolean;
     onBoundsChange?: (bounds: ViewportBounds) => void;
     onMarkerPress?: (poiId: string) => void;
-    // Satellite Scan's "tap the map to pick a spot" mode — while true, a
-    // map tap reports its lat/lng instead of doing anything else (panning
-    // still works; it's Leaflet's own 'click' event, not a drag).
+    onMemoryMarkerPress?: (markerId: string) => void;
+    // Satellite Scan / Memory Marker's "tap the map to pick a spot" mode —
+    // while true, a map tap reports its lat/lng instead of doing anything
+    // else (panning still works; it's Leaflet's own 'click' event, not a
+    // drag). Which of the two consumes the tap is map.tsx's call, not this
+    // component's — it only reports the coordinate.
     pickMode?: boolean;
     onMapTap?: (point: { latitude: number; longitude: number }) => void;
   }
@@ -59,11 +66,13 @@ export const ExplorerMap = forwardRef<
     route,
     revealedCells,
     pois = [],
+    memoryMarkers = [],
     avatarPhotoUrl,
     avatarEmoji = '🧭',
     isVip = false,
     onBoundsChange,
     onMarkerPress,
+    onMemoryMarkerPress,
     pickMode = false,
     onMapTap,
   },
@@ -92,10 +101,11 @@ export const ExplorerMap = forwardRef<
       current: currentPayload,
       fog: { outerRing: ringToPairs(geometry.outerRing), holes: geometry.holes.map(ringToPairs) },
       pois: pois.map((poi) => ({ poiId: poi.poiId, lat: poi.latitude, lng: poi.longitude, rarity: poi.rarity })),
+      memoryMarkers: memoryMarkers.map((marker) => ({ markerId: marker.markerId, lat: marker.latitude, lng: marker.longitude })),
       avatar: { photoUrl: avatarPhotoUrl, emoji: avatarEmoji, isVip },
       pickMode,
     };
-  }, [route, revealedCells, bounds, pois, avatarPhotoUrl, avatarEmoji, isVip, pickMode]);
+  }, [route, revealedCells, bounds, pois, memoryMarkers, avatarPhotoUrl, avatarEmoji, isVip, pickMode]);
 
   useEffect(() => {
     if (!ready) return;
@@ -108,6 +118,7 @@ export const ExplorerMap = forwardRef<
         | { type: 'ready' }
         | { type: 'bounds'; minLatitude: number; maxLatitude: number; minLongitude: number; maxLongitude: number }
         | { type: 'poi-tap'; poiId: string }
+        | { type: 'memo-tap'; markerId: string }
         | { type: 'map-tap'; lat: number; lng: number };
       if (message.type === 'ready') setReady(true);
       if (message.type === 'bounds') {
@@ -121,6 +132,7 @@ export const ExplorerMap = forwardRef<
         onBoundsChange?.(next);
       }
       if (message.type === 'poi-tap') onMarkerPress?.(message.poiId);
+      if (message.type === 'memo-tap') onMemoryMarkerPress?.(message.markerId);
       if (message.type === 'map-tap') onMapTap?.({ latitude: message.lat, longitude: message.lng });
     } catch {
       // Ignore anything that doesn't match the Leaflet bridge contract.
@@ -168,6 +180,7 @@ const leafletHtml = `<!doctype html>
     .player-avatar-icon.is-vip{border-color:#F5C542;box-shadow:0 0 0 2px rgba(245,197,66,0.35)}
     .player-avatar-icon img{width:100%;height:100%;object-fit:cover}
     .player-avatar-icon .emoji{font-size:18px;line-height:1}
+    .memory-marker-icon{display:flex;align-items:center;justify-content:center;font-size:20px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.6))}
   </style>
 </head>
 <body>
@@ -188,8 +201,15 @@ const leafletHtml = `<!doctype html>
       var currentMarker = null;
       var accuracyCircle = null;
       var poiMarkers = {};
+      var memoryMarkerPins = {};
       var lastCurrent = null;
       var pickModeActive = false;
+      var memoryMarkerIcon = L.divIcon({
+        className: 'memory-marker-icon',
+        html: '📌',
+        iconSize: [24, 24],
+        iconAnchor: [12, 22],
+      });
 
       window.recenterOnPlayer = function () {
         if (!lastCurrent) return;
@@ -276,6 +296,24 @@ const leafletHtml = `<!doctype html>
           if (nextPoiIds[poiId]) return;
           map.removeLayer(poiMarkers[poiId]);
           delete poiMarkers[poiId];
+        });
+
+        // Memory Marker pins — same add/remove-by-id diffing as POI markers
+        // above, keyed on markerId instead of poiId.
+        var nextMemoryMarkerIds = {};
+        (data.memoryMarkers || []).forEach(function (marker) {
+          nextMemoryMarkerIds[marker.markerId] = true;
+          if (memoryMarkerPins[marker.markerId]) return;
+          var pin = L.marker([marker.lat, marker.lng], { icon: memoryMarkerIcon }).addTo(map);
+          pin.on('click', function () {
+            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'memo-tap', markerId: marker.markerId }));
+          });
+          memoryMarkerPins[marker.markerId] = pin;
+        });
+        Object.keys(memoryMarkerPins).forEach(function (markerId) {
+          if (nextMemoryMarkerIds[markerId]) return;
+          map.removeLayer(memoryMarkerPins[markerId]);
+          delete memoryMarkerPins[markerId];
         });
       };
 

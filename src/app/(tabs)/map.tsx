@@ -19,9 +19,17 @@ import { useWeather } from '@/hooks/use-weather';
 import { convex } from '@/state/convex-client';
 import { useExplorer } from '@/state/explorer-context';
 import { useUseItem } from '@/state/inventory-client';
+import { useDeleteMemoryMarker, useMyMemoryMarkers } from '@/state/memory-marker-client';
 import type { PoiMarker } from '@/state/poi-client';
 import { useMyProfile } from '@/state/profile-client';
 import { colors, radii, spacing, typography } from '@/theme/tokens';
+
+type PickableItem = 'satellite_scan' | 'memory_marker';
+
+const PICK_BANNER_COPY: Record<PickableItem, string> = {
+  satellite_scan: 'Klepni na mapu, kam odhalit satelitní sken',
+  memory_marker: 'Klepni na mapu, kam připnout poznámku',
+};
 
 /**
  * Positioned "right under the zoom in/out buttons" — Leaflet's own zoom
@@ -85,24 +93,26 @@ export default function MapScreen() {
   const profile = useMyProfile();
   const today = useTodayStats();
   const activateItem = useUseItem();
+  const memoryMarkers = useMyMemoryMarkers();
+  const deleteMemoryMarker = useDeleteMemoryMarker();
 
-  // Satellite Scan: inventory.tsx's "Použít na mapě" button navigates here
-  // with this param to enter tap-to-pick mode. A ref (not just checking the
-  // param) guards against re-entering pick mode on every re-render, since
-  // expo-router keeps the param around after the initial navigation.
-  const params = useLocalSearchParams<{ activateSatelliteScan?: string }>();
-  const satelliteScanParamHandledRef = useRef(false);
-  const [pickingSatelliteScan, setPickingSatelliteScan] = useState(false);
+  // Inventory.tsx's "Použít na mapě" button navigates here with this param
+  // to enter tap-to-pick mode, its value naming which item is being placed.
+  // A ref (not just checking the param) guards against re-entering pick
+  // mode on every re-render, since expo-router keeps the param around after
+  // the initial navigation.
+  const params = useLocalSearchParams<{ activatePick?: PickableItem }>();
+  const pickParamHandledRef = useRef(false);
+  const [pickingItem, setPickingItem] = useState<PickableItem | null>(null);
   useEffect(() => {
-    if (params.activateSatelliteScan && !satelliteScanParamHandledRef.current) {
-      satelliteScanParamHandledRef.current = true;
-      setPickingSatelliteScan(true);
+    if (params.activatePick && !pickParamHandledRef.current) {
+      pickParamHandledRef.current = true;
+      setPickingItem(params.activatePick);
     }
-  }, [params.activateSatelliteScan]);
+  }, [params.activatePick]);
 
   const handleSatelliteScanTap = useCallback(
     async (point: { latitude: number; longitude: number }) => {
-      setPickingSatelliteScan(false);
       const result = await activateItem({ itemId: 'satellite_scan' }).catch(
         () => ({ ok: false as const, reason: 'not_owned' as const }),
       );
@@ -116,6 +126,37 @@ export default function MapScreen() {
     },
     [activateItem, revealAreaAt],
   );
+
+  const handleMapTap = useCallback(
+    (point: { latitude: number; longitude: number }) => {
+      const item = pickingItem;
+      setPickingItem(null);
+      if (item === 'satellite_scan') void handleSatelliteScanTap(point);
+      // Memory Marker still needs the note text before it's actually
+      // consumed/placed — that happens on Save in memory-marker-new.tsx,
+      // not here, so an abandoned navigation never wastes the item.
+      if (item === 'memory_marker') {
+        router.push({
+          pathname: '/memory-marker-new',
+          params: { latitude: String(point.latitude), longitude: String(point.longitude) },
+        });
+      }
+    },
+    [handleSatelliteScanTap, pickingItem, router],
+  );
+
+  const handleMemoryMarkerPress = useCallback(
+    (markerId: string) => {
+      const marker = memoryMarkers?.find((candidate) => candidate.markerId === markerId);
+      if (!marker) return;
+      Alert.alert('Memory Marker', marker.note, [
+        { text: 'Zavřít', style: 'cancel' },
+        { text: 'Smazat', style: 'destructive', onPress: () => void deleteMemoryMarker({ markerId }) },
+      ]);
+    },
+    [deleteMemoryMarker, memoryMarkers],
+  );
+
   const avatarProps = {
     avatarPhotoUrl: profile?.avatarPhotoUrl,
     avatarEmoji: avatarPresetById(profile?.avatarId ?? 'compass').emoji,
@@ -184,10 +225,12 @@ export default function MapScreen() {
             {({ pois, discover }) => (
               <ExplorerMap
                 ref={mapRef}
+                memoryMarkers={memoryMarkers}
                 onBoundsChange={setMapBounds}
-                onMapTap={(point) => void handleSatelliteScanTap(point)}
+                onMapTap={handleMapTap}
                 onMarkerPress={(poiId) => void handleMarkerPress(poiId, pois, discover)}
-                pickMode={pickingSatelliteScan}
+                onMemoryMarkerPress={handleMemoryMarkerPress}
+                pickMode={pickingItem !== null}
                 pois={pois}
                 revealedCells={revealedCells}
                 route={session.route}
@@ -199,11 +242,11 @@ export default function MapScreen() {
           <ExplorerMap ref={mapRef} onBoundsChange={setMapBounds} revealedCells={revealedCells} route={session.route} {...avatarProps} />
         )}
 
-        {pickingSatelliteScan ? (
+        {pickingItem ? (
           <View style={styles.pickBanner}>
-            <MaterialCommunityIcons color={colors.brand} name="satellite-variant" size={20} />
-            <Text style={styles.pickBannerText}>Klepni na mapu, kam odhalit satelitní sken</Text>
-            <Pressable accessibilityRole="button" onPress={() => setPickingSatelliteScan(false)}>
+            <MaterialCommunityIcons color={colors.brand} name={pickingItem === 'satellite_scan' ? 'satellite-variant' : 'note-text-outline'} size={20} />
+            <Text style={styles.pickBannerText}>{PICK_BANNER_COPY[pickingItem]}</Text>
+            <Pressable accessibilityRole="button" onPress={() => setPickingItem(null)}>
               <Text style={styles.pickBannerCancel}>Zrušit</Text>
             </Pressable>
           </View>
