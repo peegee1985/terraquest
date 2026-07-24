@@ -39,8 +39,8 @@ function AvatarPickerContent() {
     else setError(null);
   };
 
-  const changesLeft = status ? Math.max(0, status.changesAllowed - status.changesUsedInWindow) : null;
-  const locked = status?.isGuest === true || changesLeft === 0;
+  const changesLeft = status ? Math.max(0, status.changesAllowed - status.changesUsed) : null;
+  const locked = status?.isGuest === true || (status?.isVip !== true && changesLeft === 0);
 
   const pickPhoto = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -77,7 +77,9 @@ function AvatarPickerContent() {
       <Text style={styles.title}>Vyber si avatara</Text>
       {status && !status.isGuest ? (
         <Text style={styles.limitCopy}>
-          Zbývá {changesLeft} {changesLeft === 1 ? 'změna' : 'změny'} avatara.
+          {status.isVip
+            ? 'Jako VIP máš neomezené změny avatara.'
+            : `Zbývá ${changesLeft} ${changesLeft === 1 ? 'změna' : 'změny'} avatara.`}
         </Text>
       ) : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}

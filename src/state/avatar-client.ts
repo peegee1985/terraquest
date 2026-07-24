@@ -7,7 +7,7 @@ function clientFunctionReference<F extends FunctionReference<'query' | 'mutation
 
 export type AvatarChangeResult = { ok: true } | { ok: false; reason: 'guests_cannot_change_avatar' | 'limit_reached' };
 
-export type AvatarChangeStatus = { isGuest: boolean; changesUsedInWindow: number; changesAllowed: number };
+export type AvatarChangeStatus = { isGuest: boolean; isVip: boolean; changesUsed: number; changesAllowed: number };
 
 type GenerateAvatarUploadUrlMutation = FunctionReference<'mutation', 'public', Record<string, never>, string>;
 type SetAvatarPhotoMutation = FunctionReference<'mutation', 'public', { storageId: string }, AvatarChangeResult>;
