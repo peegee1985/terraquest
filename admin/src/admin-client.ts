@@ -98,6 +98,10 @@ export const deleteUserRef = clientFunctionReference<FunctionReference<'mutation
   'admin:deleteUser',
 );
 
+export const restoreUserRef = clientFunctionReference<FunctionReference<'mutation', 'public', { userId: string }, null>>(
+  'admin:restoreUser',
+);
+
 export const flagUserRef =
   clientFunctionReference<FunctionReference<'mutation', 'public', { userId: string; reason: string }, null>>(
     'admin:flagUser',

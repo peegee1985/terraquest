@@ -287,6 +287,19 @@ export const deleteUser = mutation({
   },
 });
 
+/** Undoes deleteUser — there's no purge job reading 'deletion_pending' yet, so this just clears the flag back to 'active'; a mistaken delete click was otherwise a dead end with no way back. */
+export const restoreUser = mutation({
+  args: { userId: v.id('users') },
+  returns: v.null(),
+  handler: async (ctx: any, args: any) => {
+    await requireAdmin(ctx);
+    const user = await ctx.db.get(args.userId);
+    if (!user) throw new Error('restoreUser: user not found');
+    await ctx.db.patch(args.userId, { status: 'active', updatedAt: Date.now() });
+    return null;
+  },
+});
+
 export const flagUser = mutation({
   args: { userId: v.id('users'), reason: v.string() },
   returns: v.null(),

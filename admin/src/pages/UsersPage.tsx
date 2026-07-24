@@ -9,6 +9,7 @@ import {
   grantBonusRef,
   listFlaggedUsersRef,
   listUsersRef,
+  restoreUserRef,
   setUserPlanRef,
   unbanUserRef,
   unflagUserRef,
@@ -49,6 +50,7 @@ function UserDetailPanel({ userId, onClose }: { userId: string; onClose: () => v
   const banUser = useMutation(banUserRef);
   const unbanUser = useMutation(unbanUserRef);
   const deleteUser = useMutation(deleteUserRef);
+  const restoreUser = useMutation(restoreUserRef);
   const flagUser = useMutation(flagUserRef);
   const unflagUser = useMutation(unflagUserRef);
   const setUserPlan = useMutation(setUserPlanRef);
@@ -118,16 +120,22 @@ function UserDetailPanel({ userId, onClose }: { userId: string; onClose: () => v
               Banovat
             </button>
           )}
-          <button
-            className="danger"
-            disabled={busy || detail.status === 'deletion_pending'}
-            onClick={() => {
-              if (confirm(`Opravdu smazat účet ${detail.handle}?`)) void run(() => deleteUser({ userId }));
-            }}
-            type="button"
-          >
-            {detail.status === 'deletion_pending' ? 'Smazání naplánováno' : 'Smazat účet'}
-          </button>
+          {detail.status === 'deletion_pending' ? (
+            <button disabled={busy} onClick={() => run(() => restoreUser({ userId }))} type="button">
+              Zrušit smazání
+            </button>
+          ) : (
+            <button
+              className="danger"
+              disabled={busy}
+              onClick={() => {
+                if (confirm(`Opravdu smazat účet ${detail.handle}?`)) void run(() => deleteUser({ userId }));
+              }}
+              type="button"
+            >
+              Smazat účet
+            </button>
+          )}
         </div>
       </section>
 
