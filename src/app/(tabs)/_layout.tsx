@@ -10,7 +10,10 @@ function TabIcon({ name, color }: { name: IconName; color: React.ComponentProps<
   return <MaterialCommunityIcons color={color} name={name} size={24} />;
 }
 
-const TAB_BAR_CONTENT_HEIGHT = 52;
+// 52 used to clip the label text: paddingTop(8) + paddingBottom(10) left only
+// 34px for a 24px icon plus a label row, so descenders got cut off right at
+// the bar's own bottom edge (visible in a 7/24 screenshot on 3-button nav).
+const TAB_BAR_CONTENT_HEIGHT = 64;
 
 export default function TabsLayout() {
   // A hardcoded tabBarStyle.height (the previous `72`) opts the bar out of
