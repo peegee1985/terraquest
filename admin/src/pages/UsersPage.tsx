@@ -39,6 +39,7 @@ function UserRow({ user, selected, onSelect }: { user: UserSummary; selected: bo
       <div className="user-row-sub muted">
         {user.email ?? 'bez e-mailu'} · Lv.{user.level} · {user.totalXp} XP
       </div>
+      <div className="user-row-sub muted">Vytvořen: {new Date(user.createdAt).toLocaleString('cs-CZ')}</div>
     </button>
   );
 }
