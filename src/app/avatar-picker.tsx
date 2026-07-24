@@ -53,7 +53,13 @@ function AvatarPickerContent() {
 
     setUploading(true);
     try {
-      const uploadResult = await uploadAvatarPhoto(result.assets[0].uri, () => generateAvatarUploadUrl({}), setAvatarPhoto);
+      const asset = result.assets[0];
+      const uploadResult = await uploadAvatarPhoto(
+        asset.uri,
+        () => generateAvatarUploadUrl({}),
+        setAvatarPhoto,
+        asset.mimeType,
+      );
       handleResult(uploadResult);
     } catch (uploadError) {
       // Previously swallowed with no logging at all — a failure here had

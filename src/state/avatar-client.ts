@@ -1,5 +1,6 @@
 import type { FunctionReference } from 'convex/server';
 import { useMutation, useQuery } from 'convex/react';
+import { File } from 'expo-file-system';
 
 function clientFunctionReference<F extends FunctionReference<'query' | 'mutation'>>(name: string): F {
   return { [Symbol.for('functionName')]: name } as unknown as F;
@@ -45,21 +46,28 @@ export function useMyAvatarChangeStatus(): AvatarChangeStatus | null | undefined
  * no single-call "upload and attach" API. Returns setAvatarPhoto's result
  * so the caller can show the same guest/limit-reached messaging the
  * preset picker shows.
+ *
+ * Uses expo-file-system's native upload (not fetch(localUri).blob()) —
+ * React Native's Blob support for local file:// URIs is unreliable on
+ * Android (bodies can come out empty/truncated), which is exactly what
+ * was producing the "status 400" Convex storage was rejecting. Convex's
+ * own docs point at expo-file-system for this reason: it streams the file
+ * bytes natively instead of going through RN's Blob polyfill.
  */
 export async function uploadAvatarPhoto(
   localUri: string,
   generateUploadUrl: () => Promise<string>,
   setAvatarPhoto: (args: { storageId: string }) => Promise<AvatarChangeResult>,
+  mimeType = 'image/jpeg',
 ): Promise<AvatarChangeResult> {
   const uploadUrl = await generateUploadUrl();
-  const response = await fetch(localUri);
-  const blob = await response.blob();
-  const uploadResponse = await fetch(uploadUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': blob.type || 'image/jpeg' },
-    body: blob,
+  const result = await new File(localUri).upload(uploadUrl, {
+    httpMethod: 'POST',
+    headers: { 'Content-Type': mimeType },
   });
-  if (!uploadResponse.ok) throw new Error(`Avatar upload failed with status ${uploadResponse.status}`);
-  const { storageId } = (await uploadResponse.json()) as { storageId: string };
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error(`Avatar upload failed with status ${result.status}`);
+  }
+  const { storageId } = JSON.parse(result.body) as { storageId: string };
   return setAvatarPhoto({ storageId });
 }

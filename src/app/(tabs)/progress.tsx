@@ -274,6 +274,12 @@ function ProgressContent({ profile }: { profile: MyProfile | null | undefined })
       <Card style={styles.ranksCard}>
         {RANK_TIERS.map((rank, index) => {
           const unlocked = progress.level >= rank.level;
+          // The row for the tier the player is actually in right now reads
+          // "Úroveň {rank.level}" too (that's the tier's *unlock threshold*,
+          // not the player's level) — easy to misread as "you're level 1"
+          // when e.g. level 9 is still within the Tulák tier. Show the real
+          // current level on that one row instead of the threshold.
+          const isCurrentTier = unlocked && (index === RANK_TIERS.length - 1 || progress.level < RANK_TIERS[index + 1].level);
           return (
             <View key={rank.rankId} style={styles.rankRow}>
               <View style={[styles.rankNode, unlocked ? styles.rankNodeUnlocked : undefined]}>
@@ -281,7 +287,9 @@ function ProgressContent({ profile }: { profile: MyProfile | null | undefined })
               </View>
               <View style={styles.rankCopy}>
                 <Text style={[styles.rankTitle, !unlocked && styles.lockedText]}>{rank.label}</Text>
-                <Text style={styles.rankLevel}>Úroveň {rank.level}</Text>
+                <Text style={styles.rankLevel}>
+                  {isCurrentTier ? `Aktuální úroveň: ${progress.level}` : `Úroveň ${rank.level}`}
+                </Text>
               </View>
               {unlocked ? <MaterialCommunityIcons color={colors.brand} name="check-circle" size={22} /> : <MaterialCommunityIcons color={colors.textDisabled} name="lock-outline" size={20} />}
               {index < RANK_TIERS.length - 1 ? <View style={[styles.rankLine, unlocked && progress.level >= RANK_TIERS[index + 1].level ? styles.rankLineUnlocked : undefined]} /> : null}
