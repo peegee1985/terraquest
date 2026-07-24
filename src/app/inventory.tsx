@@ -6,7 +6,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Card, Eyebrow, PrimaryButton, Screen } from '@/components/ui/primitives';
 import { convex } from '@/state/convex-client';
 import { useMyInventory, useUseItem, type ActivatableItemId, type InventoryEntry, type InventoryItemId } from '@/state/inventory-client';
-import { useMyProfile } from '@/state/profile-client';
+import { useMyProfile, useUnlockMapTheme } from '@/state/profile-client';
 import { colors, spacing, typography } from '@/theme/tokens';
 
 const ITEM_LABELS: Record<InventoryItemId, string> = {
@@ -61,15 +61,17 @@ function ActiveBoostBanner({ label, expiresAt }: { label: string; expiresAt: num
   );
 }
 
-function InventoryRow({ entry }: { entry: InventoryEntry }) {
+function InventoryRow({ entry, mapThemeUnlocked }: { entry: InventoryEntry; mapThemeUnlocked: boolean }) {
   const router = useRouter();
   // Named to avoid the "use*" prefix — it's a plain async function (the
   // mutation caller useMutation returns), not a hook, but ESLint's
   // react-hooks/rules-of-hooks flags any "use*"-named call inside a
   // callback purely by naming convention.
   const activateItem = useUseItem();
+  const unlockMapTheme = useUnlockMapTheme();
   const [busy, setBusy] = useState(false);
   const activatable = ACTIVATABLE_ITEMS.has(entry.itemId);
+  const isMapThemeToken = entry.itemId === 'map_theme_token';
   // A narrowing check (not just MAP_PICK_ITEMS.has, which Sets don't narrow
   // from) so the itemId handed to router.push below is the exact literal
   // union expo-router's typed route params expects, not the wider
@@ -83,7 +85,24 @@ function InventoryRow({ entry }: { entry: InventoryEntry }) {
         <Text style={styles.rowLabel}>{ITEM_LABELS[entry.itemId]}</Text>
         <Text style={styles.rowQuantity}>×{entry.quantity}</Text>
       </View>
-      {mapPickItemId ? (
+      {isMapThemeToken ? (
+        // A PERMANENT one-time unlock (profile.ts's unlockMapTheme), not a
+        // consumable used repeatedly — once mapThemeUnlocked is true, further
+        // taps would just be a no-op server-side (see that mutation's
+        // comment), so the button reflects that instead of implying it does
+        // something each time.
+        <PrimaryButton
+          disabled={busy || mapThemeUnlocked || entry.quantity === 0}
+          icon="palette-outline"
+          label={mapThemeUnlocked ? 'Odemčeno' : busy ? 'Odemykám...' : 'Odemknout'}
+          onPress={async () => {
+            setBusy(true);
+            await unlockMapTheme({}).catch(() => undefined);
+            setBusy(false);
+          }}
+          tone="surface"
+        />
+      ) : mapPickItemId ? (
         <PrimaryButton
           disabled={entry.quantity === 0}
           icon={ITEM_ICONS[entry.itemId]}
@@ -140,7 +159,7 @@ function InventoryContent() {
           {inventory
             .filter((entry) => entry.quantity > 0)
             .map((entry) => (
-              <InventoryRow entry={entry} key={entry.itemId} />
+              <InventoryRow entry={entry} key={entry.itemId} mapThemeUnlocked={profile?.mapThemeUnlocked ?? false} />
             ))}
         </Card>
       )}

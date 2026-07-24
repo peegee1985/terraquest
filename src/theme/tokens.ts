@@ -23,6 +23,13 @@ export const colors = {
   // from still-fogged ones. High opacity keeps it reading as solid grey
   // rather than washing back toward black once blended over the map tile.
   fog: 'rgba(112, 124, 138, 0.92)',
+  // map_theme_token's "natural light map" unlock (explorer-map.native.tsx):
+  // the mid-grey fog above was tuned to blend into a near-black basemap —
+  // reused as-is over light tiles it would read as a translucent haze
+  // instead of "not-see-through". This is deliberately near-black and
+  // almost fully opaque so unrevealed ground stays genuinely hidden
+  // regardless of how bright the basemap under it is.
+  fogOnLightMap: 'rgba(8, 9, 11, 0.97)',
   brandSoft: 'rgba(56, 230, 138, 0.14)',
   amberSoft: 'rgba(255, 184, 77, 0.14)',
   blueSoft: 'rgba(76, 184, 255, 0.14)',

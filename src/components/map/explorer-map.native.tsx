@@ -29,6 +29,7 @@ type MapPayload = {
   memoryMarkers: { markerId: string; lat: number; lng: number }[];
   avatar: { photoUrl?: string; emoji: string; isVip: boolean };
   pickMode: boolean;
+  theme: 'dark' | 'light';
 };
 
 const DEFAULT_BOUNDS: ViewportBounds = {
@@ -60,6 +61,10 @@ export const ExplorerMap = forwardRef<
     // component's — it only reports the coordinate.
     pickMode?: boolean;
     onMapTap?: (point: { latitude: number; longitude: number }) => void;
+    // map_theme_token's unlock (settings.tsx's Dark/Light toggle) — defaults
+    // to 'dark' for guests/pre-unlock users, same as the server default in
+    // profile.ts's getMyProfile.
+    theme?: 'dark' | 'light';
   }
 >(function ExplorerMap(
   {
@@ -75,6 +80,7 @@ export const ExplorerMap = forwardRef<
     onMemoryMarkerPress,
     pickMode = false,
     onMapTap,
+    theme = 'dark',
   },
   ref,
 ) {
@@ -104,8 +110,9 @@ export const ExplorerMap = forwardRef<
       memoryMarkers: memoryMarkers.map((marker) => ({ markerId: marker.markerId, lat: marker.latitude, lng: marker.longitude })),
       avatar: { photoUrl: avatarPhotoUrl, emoji: avatarEmoji, isVip },
       pickMode,
+      theme,
     };
-  }, [route, revealedCells, bounds, pois, memoryMarkers, avatarPhotoUrl, avatarEmoji, isVip, pickMode]);
+  }, [route, revealedCells, bounds, pois, memoryMarkers, avatarPhotoUrl, avatarEmoji, isVip, pickMode, theme]);
 
   useEffect(() => {
     if (!ready) return;
@@ -189,7 +196,17 @@ const leafletHtml = `<!doctype html>
   <script>
     (function () {
       var map = L.map('map', { zoomControl: false, attributionControl: true }).setView([${INITIAL_CENTER[0]}, ${INITIAL_CENTER[1]}], ${INITIAL_ZOOM});
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+
+      // map_theme_token's unlock (settings.tsx): both free, no-API-key CARTO
+      // basemaps, same subdomain/attribution shape — only the tile path
+      // differs. tileLayer is swapped (removed + re-added), not mutated in
+      // place, since Leaflet has no "change this layer's source URL" API.
+      var TILE_URLS = {
+        dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+        light: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+      };
+      var currentTheme = 'dark';
+      var tileLayer = L.tileLayer(TILE_URLS[currentTheme], {
         maxZoom: 20,
         subdomains: 'abcd',
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
@@ -240,9 +257,22 @@ const leafletHtml = `<!doctype html>
         pickModeActive = !!data.pickMode;
         map.getContainer().classList.toggle('picking', pickModeActive);
 
+        var theme = data.theme === 'light' ? 'light' : 'dark';
+        if (theme !== currentTheme) {
+          currentTheme = theme;
+          map.removeLayer(tileLayer);
+          tileLayer = L.tileLayer(TILE_URLS[currentTheme], {
+            maxZoom: 20,
+            subdomains: 'abcd',
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+          }).addTo(map);
+          tileLayer.bringToBack();
+        }
+
         if (fogLayer) map.removeLayer(fogLayer);
         var rings = [data.fog.outerRing].concat(data.fog.holes);
-        fogLayer = L.polygon(rings, { stroke: false, fillColor: '${colors.fog}', fillOpacity: 1, interactive: false }).addTo(map);
+        var fogColor = currentTheme === 'light' ? '${colors.fogOnLightMap}' : '${colors.fog}';
+        fogLayer = L.polygon(rings, { stroke: false, fillColor: fogColor, fillOpacity: 1, interactive: false }).addTo(map);
 
         if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
         if (data.route.length > 1) {

@@ -134,6 +134,14 @@ export default defineSchema({
     activeRadiusBoostRingBonus: v.optional(v.number()),
     activeXpBoostExpiresAt: v.optional(v.number()),
     activeXpBoostMultiplier: v.optional(v.number()),
+    // map_theme_token (profile.ts's unlockMapTheme): a one-time PERMANENT
+    // unlock, not a timed boost like the fields above — consuming a token
+    // sets mapThemeUnlocked once and for all, after which mapTheme is a free
+    // Dark/Light toggle (settings.tsx) that never touches inventory again.
+    // Absent mapThemeUnlocked/mapTheme both mean the pre-unlock default
+    // (locked, dark).
+    mapThemeUnlocked: v.optional(v.boolean()),
+    mapTheme: v.optional(v.union(v.literal('dark'), v.literal('light'))),
     updatedAt: v.number(),
   })
     .index('by_user', ['userId'])

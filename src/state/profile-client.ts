@@ -25,7 +25,12 @@ export type MyProfile = {
   activeRadiusBoostExpiresAt?: number;
   activeXpBoostExpiresAt?: number;
   activeXpBoostMultiplier?: number;
+  mapThemeUnlocked: boolean;
+  mapTheme: 'dark' | 'light';
 };
+
+export type UnlockMapThemeResult = { ok: true } | { ok: false; reason: 'not_owned' };
+export type SetMapThemeResult = { ok: true } | { ok: false; reason: 'not_unlocked' };
 
 // Same clientFunctionReference trick as session-sync.ts/poi-client.ts —
 // builds the runtime shape Convex's client SDK looks for without importing
@@ -37,9 +42,13 @@ function clientFunctionReference<F extends FunctionReference<'query' | 'mutation
 
 type GetMyProfileQuery = FunctionReference<'query', 'public', Record<string, never>, MyProfile | null>;
 type SetCountryMutation = FunctionReference<'mutation', 'public', { country: string }, null>;
+type UnlockMapThemeMutation = FunctionReference<'mutation', 'public', Record<string, never>, UnlockMapThemeResult>;
+type SetMapThemeMutation = FunctionReference<'mutation', 'public', { theme: 'dark' | 'light' }, SetMapThemeResult>;
 
 const getMyProfileRef = clientFunctionReference<GetMyProfileQuery>('profile:getMyProfile');
 const setCountryRef = clientFunctionReference<SetCountryMutation>('profile:setCountry');
+const unlockMapThemeRef = clientFunctionReference<UnlockMapThemeMutation>('profile:unlockMapTheme');
+const setMapThemeRef = clientFunctionReference<SetMapThemeMutation>('profile:setMapTheme');
 
 /** Only ever mounted when a Convex client exists — see poi-layer.tsx's PoiLayer for the same precondition on useQuery/useMutation needing a ConvexProvider ancestor. */
 export function useMyProfile(): MyProfile | null | undefined {
@@ -48,4 +57,12 @@ export function useMyProfile(): MyProfile | null | undefined {
 
 export function useSetCountry() {
   return useMutation(setCountryRef);
+}
+
+export function useUnlockMapTheme() {
+  return useMutation(unlockMapThemeRef);
+}
+
+export function useSetMapTheme() {
+  return useMutation(setMapThemeRef);
 }

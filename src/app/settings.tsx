@@ -14,7 +14,7 @@ import { useAuthIdentity } from '@/state/auth-context';
 import { convex } from '@/state/convex-client';
 import { useMyXpLedger } from '@/state/data-export-client';
 import { useExplorer } from '@/state/explorer-context';
-import { useMyProfile } from '@/state/profile-client';
+import { useMyProfile, useSetMapTheme } from '@/state/profile-client';
 import { useMyPrivateZones } from '@/state/privacy-zones-client';
 import { useSetDailyStepGoal } from '@/state/step-goal-client';
 import { colors, radii, spacing, typography } from '@/theme/tokens';
@@ -121,6 +121,40 @@ function StepGoalRow() {
               style={[styles.stepGoalPreset, active && styles.stepGoalPresetActive]}
             >
               <Text style={[styles.stepGoalPresetText, active && styles.stepGoalPresetTextActive]}>{(preset / 1000).toFixed(0)}k</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </Card>
+  );
+}
+
+/** Only rendered once map_theme_token has been spent (inventory.tsx's unlockMapTheme) — same "unlocked, then free forever" split as the item's own comment in profile.ts. */
+function MapThemeRow() {
+  const profile = useMyProfile();
+  const setMapTheme = useSetMapTheme();
+  if (!profile?.mapThemeUnlocked) return null;
+  const currentTheme = profile.mapTheme;
+
+  return (
+    <Card style={styles.stepGoalCard}>
+      <View style={styles.actionCopy}>
+        <Text style={styles.cardTitle}>Vzhled mapy</Text>
+        <Text style={styles.cardBody}>Odemčeno pomocí Mapového motivu z inventáře.</Text>
+      </View>
+      <View style={styles.stepGoalPresetsRow}>
+        {(['dark', 'light'] as const).map((theme) => {
+          const active = theme === currentTheme;
+          return (
+            <Pressable
+              accessibilityRole="button"
+              key={theme}
+              onPress={() => void setMapTheme({ theme })}
+              style={[styles.stepGoalPreset, active && styles.stepGoalPresetActive]}
+            >
+              <Text style={[styles.stepGoalPresetText, active && styles.stepGoalPresetTextActive]}>
+                {theme === 'dark' ? 'Tmavá' : 'Světlá'}
+              </Text>
             </Pressable>
           );
         })}
@@ -243,6 +277,7 @@ export default function SettingsScreen() {
       </Pressable>
 
       {convex ? <StepGoalRow /> : null}
+      {convex ? <MapThemeRow /> : null}
 
       {convex ? <ConnectedExportRow /> : <ExportRow />}
       <DeleteHistoryRow />

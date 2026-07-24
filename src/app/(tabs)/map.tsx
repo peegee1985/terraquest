@@ -162,6 +162,7 @@ export default function MapScreen() {
     avatarEmoji: avatarPresetById(profile?.avatarId ?? 'compass').emoji,
     isVip: profile?.isVip ?? false,
   };
+  const mapTheme = profile?.mapTheme ?? 'dark';
   const mapRef = useRef<ExplorerMapHandle>(null);
   // Reported by ExplorerMap (Leaflet's moveend on native, route-derived on
   // web) — feeds the POI query's bounding box. Starts at a placeholder
@@ -234,12 +235,13 @@ export default function MapScreen() {
                 pois={pois}
                 revealedCells={revealedCells}
                 route={session.route}
+                theme={mapTheme}
                 {...avatarProps}
               />
             )}
           </PoiLayer>
         ) : (
-          <ExplorerMap ref={mapRef} onBoundsChange={setMapBounds} revealedCells={revealedCells} route={session.route} {...avatarProps} />
+          <ExplorerMap ref={mapRef} onBoundsChange={setMapBounds} revealedCells={revealedCells} route={session.route} theme={mapTheme} {...avatarProps} />
         )}
 
         {pickingItem ? (
