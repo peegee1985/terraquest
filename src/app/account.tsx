@@ -132,7 +132,16 @@ export default function AccountScreen() {
         const code = queryParams?.code;
         if (typeof code === 'string') {
           await signIn('google', { code });
+        } else {
+          // Google's redirect came back without a usable code (e.g. it
+          // carried an error param instead) — this used to fail silently,
+          // leaving the guest screen up with zero feedback.
+          setError('Přihlášení přes Google se nedokončilo. Zkus to prosím znovu.');
         }
+      } else if (result.type !== 'cancel' && result.type !== 'dismiss') {
+        // A genuine failure of the browser session itself (not the user
+        // backing out) — same silent-failure gap as above.
+        setError('Přihlášení přes Google se nedokončilo. Zkus to prosím znovu.');
       }
     } catch (googleError) {
       setError('Přihlášení přes Google zatím není nastavené (chybí OAuth klient).');
