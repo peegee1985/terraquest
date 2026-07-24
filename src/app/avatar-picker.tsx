@@ -16,6 +16,7 @@ import {
 } from '@/state/avatar-client';
 import { convex } from '@/state/convex-client';
 import { useMyProfile } from '@/state/profile-client';
+import { Sentry } from '@/state/sentry';
 import { colors, radii, spacing, typography } from '@/theme/tokens';
 
 const AVATAR_CHANGE_ERROR_COPY: Record<string, string> = {
@@ -54,7 +55,12 @@ function AvatarPickerContent() {
     try {
       const uploadResult = await uploadAvatarPhoto(result.assets[0].uri, () => generateAvatarUploadUrl({}), setAvatarPhoto);
       handleResult(uploadResult);
-    } catch {
+    } catch (uploadError) {
+      // Previously swallowed with no logging at all — a failure here had
+      // zero diagnostic trail, so a repeat couldn't be root-caused from
+      // Sentry either. Surface it same as every other crash path.
+      console.warn('TerraQuest: avatar photo upload failed', uploadError);
+      Sentry.captureException(uploadError);
       Alert.alert('Nahrání se nepovedlo', 'Zkus to prosím znovu.');
     } finally {
       setUploading(false);
