@@ -316,17 +316,18 @@ export default defineSchema({
   }).index('by_user_achievement', ['userId', 'achievementId']),
 
   // TQ-30: MVP inventory — one row per (userId, itemId), quantity-stacking.
-  // map_theme_token/scanner_pulse/memory_marker are inert collectibles —
-  // sitting in inventory, they never feed an XP/ranking computation
-  // ("itemy nemění leaderboard"). TQ-122's radius_boost_potion/
-  // xp_boost_potion are the one deliberate exception to that: they're
-  // activatable (items.ts's useItem consumes one and writes a temporary
-  // effect into userStats' activeRadiusBoost*/activeXpBoost* fields, which
-  // fog reveal / awardXp DO read) — the guarantee still holds for the
-  // unused item sitting here, it just isn't inert once spent. Rest Day
-  // Token keeps using userStats's dedicated restTokens counter from TQ-28
-  // rather than migrating into this table — that mechanic already ships
-  // and works, so it's left alone.
+  // map_theme_token/memory_marker are still inert collectibles — sitting in
+  // inventory, they never feed an XP/ranking computation ("itemy nemění
+  // leaderboard"). Everything else here IS activatable via items.ts's
+  // useItem: radius_boost_potion/xp_boost_potion/scanner_pulse consume one
+  // and write a temporary effect into userStats' activeRadiusBoost*/
+  // activeXpBoost* fields (which fog reveal / awardXp DO read); satellite_scan
+  // consumes one and triggers a pure client-side fog reveal (never touches
+  // userStats — see items.ts's SATELLITE_SCAN_ITEM_ID). The guarantee still
+  // holds for an unused item sitting here, it just isn't inert once spent.
+  // Rest Day Token keeps using userStats's dedicated restTokens counter
+  // from TQ-28 rather than migrating into this table — that mechanic
+  // already ships and works, so it's left alone.
   userInventoryItems: defineTable({
     userId: v.id('users'),
     itemId: v.union(
@@ -335,6 +336,7 @@ export default defineSchema({
       v.literal('memory_marker'),
       v.literal('radius_boost_potion'),
       v.literal('xp_boost_potion'),
+      v.literal('satellite_scan'),
     ),
     quantity: v.number(),
     updatedAt: v.number(),

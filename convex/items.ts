@@ -3,13 +3,24 @@ import { mutationGeneric as mutation } from 'convex/server';
 import { v } from 'convex/values';
 
 import {
+  LEVEL_UP_ITEM_ID as SCANNER_PULSE_ITEM_ID,
   RADIUS_BOOST_DURATION_MS,
   RADIUS_BOOST_ITEM_ID,
   RADIUS_BOOST_RING_BONUS,
+  SCANNER_PULSE_DURATION_MS,
+  SCANNER_PULSE_RING_BONUS,
   XP_BOOST_DURATION_MS,
   XP_BOOST_ITEM_ID,
   XP_BOOST_MULTIPLIER,
 } from './levelRewardRules';
+
+// Not a level-up reward (never appears in levelRewardRules.ts's table) —
+// granted separately (admin, achievements, etc.). Its "use" is a pure
+// client-side fog reveal (explorer-context.tsx's revealAreaAt, driven by
+// fog.ts's cellsRevealedByPoint with normalizedForXp: false so it can
+// never earn exploration XP for ground never actually walked) — this
+// mutation's only job for it is the authoritative inventory decrement.
+export const SATELLITE_SCAN_ITEM_ID = 'satellite_scan';
 
 function defaultUserStatsRow(userId: any, now: number, overrides: Record<string, unknown> = {}) {
   return {
@@ -29,21 +40,30 @@ function defaultUserStatsRow(userId: any, now: number, overrides: Record<string,
 }
 
 const useItemResult = v.union(
-  v.object({ ok: v.literal(true), expiresAt: v.number() }),
+  v.object({ ok: v.literal(true), expiresAt: v.optional(v.number()) }),
   v.object({ ok: v.literal(false), reason: v.literal('not_owned') }),
 );
 
 /**
- * Activates one Radius/XP Boost Potion from inventory — consumes one unit
- * and writes the effect straight into userStats' active-boost fields
- * (fog reveal / awardXp read those, not the inventory row itself, so
- * simply owning an unused potion never affects anything). Using another
- * potion of the same kind while one is still active just resets the
- * expiry/magnitude rather than stacking — same "one active slot per kind"
- * model the schema comment documents.
+ * Consumes one unit of an activatable item from inventory.
+ *
+ * Radius Boost Potion / Scanner Pulse both write into the SAME
+ * userStats.activeRadiusBoost* fields ("one active slot" — using either
+ * while one is already active resets the expiry/magnitude rather than
+ * stacking), just with Scanner Pulse's smaller/shorter numbers since it's
+ * the one granted on every level-up rather than only rank-tier levels.
+ * XP Boost Potion writes into the separate activeXpBoost* fields.
+ * Satellite Scan touches nothing here — see SATELLITE_SCAN_ITEM_ID above.
  */
 export const useItem = mutation({
-  args: { itemId: v.union(v.literal(RADIUS_BOOST_ITEM_ID), v.literal(XP_BOOST_ITEM_ID)) },
+  args: {
+    itemId: v.union(
+      v.literal(RADIUS_BOOST_ITEM_ID),
+      v.literal(XP_BOOST_ITEM_ID),
+      v.literal(SCANNER_PULSE_ITEM_ID),
+      v.literal(SATELLITE_SCAN_ITEM_ID),
+    ),
+  },
   returns: useItemResult,
   handler: async (ctx: any, args: any) => {
     const userId = await getAuthUserId(ctx);
@@ -60,11 +80,21 @@ export const useItem = mutation({
     const now = Date.now();
     await ctx.db.patch(inventoryRow._id, { quantity: inventoryRow.quantity - 1, updatedAt: now });
 
-    const isRadiusBoost = args.itemId === RADIUS_BOOST_ITEM_ID;
-    const expiresAt = now + (isRadiusBoost ? RADIUS_BOOST_DURATION_MS : XP_BOOST_DURATION_MS);
-    const patch = isRadiusBoost
-      ? { activeRadiusBoostExpiresAt: expiresAt, activeRadiusBoostRingBonus: RADIUS_BOOST_RING_BONUS, updatedAt: now }
-      : { activeXpBoostExpiresAt: expiresAt, activeXpBoostMultiplier: XP_BOOST_MULTIPLIER, updatedAt: now };
+    if (args.itemId === SATELLITE_SCAN_ITEM_ID) {
+      return { ok: true as const };
+    }
+
+    const isXpBoost = args.itemId === XP_BOOST_ITEM_ID;
+    const isScannerPulse = args.itemId === SCANNER_PULSE_ITEM_ID;
+    const expiresAt =
+      now + (isXpBoost ? XP_BOOST_DURATION_MS : isScannerPulse ? SCANNER_PULSE_DURATION_MS : RADIUS_BOOST_DURATION_MS);
+    const patch = isXpBoost
+      ? { activeXpBoostExpiresAt: expiresAt, activeXpBoostMultiplier: XP_BOOST_MULTIPLIER, updatedAt: now }
+      : {
+          activeRadiusBoostExpiresAt: expiresAt,
+          activeRadiusBoostRingBonus: isScannerPulse ? SCANNER_PULSE_RING_BONUS : RADIUS_BOOST_RING_BONUS,
+          updatedAt: now,
+        };
 
     const stats = await ctx.db
       .query('userStats')

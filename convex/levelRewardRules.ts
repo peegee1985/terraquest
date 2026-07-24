@@ -31,6 +31,14 @@ export const RADIUS_BOOST_DURATION_MS = 60 * 60 * 1000; // 1 hour
 export const XP_BOOST_MULTIPLIER = 1.5;
 export const XP_BOOST_DURATION_MS = 30 * 60 * 1000; // 30 minutes
 
+// Scanner Pulse (confirmed against Fogbreaker's reference behavior): the
+// same kind of effect as Radius Boost Potion (writes into the same
+// activeRadiusBoost* userStats fields, "one active slot" — using one resets
+// the other's expiry rather than stacking), just deliberately smaller and
+// shorter since it's the one granted on literally every level-up.
+export const SCANNER_PULSE_RING_BONUS = 1;
+export const SCANNER_PULSE_DURATION_MS = 20 * 60 * 1000; // 20 minutes
+
 // A permanent reveal-ring bump granted directly (not a consumable item) at
 // every rank-tier level.
 export const PERMANENT_RADIUS_RING_BONUS_PER_TIER = 1;

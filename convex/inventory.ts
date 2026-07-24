@@ -7,6 +7,7 @@ const itemIdValidator = v.union(
   v.literal('memory_marker'),
   v.literal('radius_boost_potion'),
   v.literal('xp_boost_potion'),
+  v.literal('satellite_scan'),
 );
 
 /**

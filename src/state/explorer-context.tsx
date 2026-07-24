@@ -6,10 +6,10 @@ import { demoRoute } from '@/data/demo';
 import { getLocalPersistence, type LocalPersistence, type LocalSessionRow } from '@/data/local';
 import { isSameLocalDay } from '@/domain/checkpoint';
 import { distanceXp, explorationXp } from '@/domain/progression';
-import { cellsRevealedByRoute, centerlineCellsForRoute } from '@/domain/fog';
+import { cellsRevealedByPoint, cellsRevealedByRoute, centerlineCellsForRoute, SATELLITE_SCAN_RING_RADIUS, type LatLng } from '@/domain/fog';
 import { filterRoute, routeDistanceMeters } from '@/domain/gps-filter';
 import { getStepsBetween } from '@/domain/health-connect';
-import { classifyMovement, computeRollingSpeedMps, movementModeBit } from '@/domain/movement';
+import { classifyMovement, computeRollingSpeedMps, movementModeBit, MANUAL_REVEAL_MODE_BIT } from '@/domain/movement';
 import { ExplorerSnapshot, MovementMode, TrackPoint } from '@/domain/types';
 import {
   LOCAL_SESSION_ID,
@@ -70,6 +70,7 @@ type ExplorerContextValue = {
   hasCompletedSession: boolean;
   revealedCells: string[];
   resetLocalHistory: () => Promise<{ ok: boolean; reason?: string }>;
+  revealAreaAt: (point: LatLng) => Promise<void>;
 };
 
 const MAX_ROUTE_POINTS = 500;
@@ -500,9 +501,35 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
     return { ok: true };
   }, []);
 
+  // Satellite Scan (convex/items.ts's SATELLITE_SCAN_ITEM_ID): a one-shot
+  // fog reveal at a player-chosen point. Callers (map.tsx) are expected to
+  // have already confirmed the server-side useItem consumption succeeded
+  // before calling this — this function itself only touches the local fog
+  // store, same as the ambient reveal poll above, just with a fixed larger
+  // ring and normalizedForXp always false so it can never be mistaken for
+  // ground the player actually walked (see MANUAL_REVEAL_MODE_BIT's doc).
+  const revealAreaAt = useCallback(async (point: LatLng) => {
+    const persistence = persistenceRef.current;
+    if (!persistence) return;
+    const seenAt = Date.now();
+    const cells = cellsRevealedByPoint({ ...point, timestamp: seenAt }, undefined, SATELLITE_SCAN_RING_RADIUS);
+    await Promise.all(
+      cells.map((h3Index) =>
+        persistence.exploredCells.upsertSeen({
+          h3Index,
+          seenAt,
+          modeBit: MANUAL_REVEAL_MODE_BIT,
+          sourceSessionId: null,
+          normalizedForXp: false,
+        }),
+      ),
+    );
+    setRevealedCells(await persistence.exploredCells.listAllCellIds());
+  }, []);
+
   const value = useMemo(
-    () => ({ snapshot, session, hasCompletedSession, revealedCells, resetLocalHistory }),
-    [hasCompletedSession, resetLocalHistory, revealedCells, session, snapshot],
+    () => ({ snapshot, session, hasCompletedSession, revealedCells, resetLocalHistory, revealAreaAt }),
+    [hasCompletedSession, resetLocalHistory, revealAreaAt, revealedCells, session, snapshot],
   );
 
   return (

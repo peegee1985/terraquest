@@ -25,6 +25,7 @@ type MapPayload = {
   fog: { outerRing: [number, number][]; holes: [number, number][][] };
   pois: { poiId: string; lat: number; lng: number; rarity: PoiMarker['rarity'] }[];
   avatar: { photoUrl?: string; emoji: string; isVip: boolean };
+  pickMode: boolean;
 };
 
 const DEFAULT_BOUNDS: ViewportBounds = {
@@ -47,9 +48,25 @@ export const ExplorerMap = forwardRef<
     isVip?: boolean;
     onBoundsChange?: (bounds: ViewportBounds) => void;
     onMarkerPress?: (poiId: string) => void;
+    // Satellite Scan's "tap the map to pick a spot" mode — while true, a
+    // map tap reports its lat/lng instead of doing anything else (panning
+    // still works; it's Leaflet's own 'click' event, not a drag).
+    pickMode?: boolean;
+    onMapTap?: (point: { latitude: number; longitude: number }) => void;
   }
 >(function ExplorerMap(
-  { route, revealedCells, pois = [], avatarPhotoUrl, avatarEmoji = '🧭', isVip = false, onBoundsChange, onMarkerPress },
+  {
+    route,
+    revealedCells,
+    pois = [],
+    avatarPhotoUrl,
+    avatarEmoji = '🧭',
+    isVip = false,
+    onBoundsChange,
+    onMarkerPress,
+    pickMode = false,
+    onMapTap,
+  },
   ref,
 ) {
   const webviewRef = useRef<RNWebView>(null);
@@ -76,8 +93,9 @@ export const ExplorerMap = forwardRef<
       fog: { outerRing: ringToPairs(geometry.outerRing), holes: geometry.holes.map(ringToPairs) },
       pois: pois.map((poi) => ({ poiId: poi.poiId, lat: poi.latitude, lng: poi.longitude, rarity: poi.rarity })),
       avatar: { photoUrl: avatarPhotoUrl, emoji: avatarEmoji, isVip },
+      pickMode,
     };
-  }, [route, revealedCells, bounds, pois, avatarPhotoUrl, avatarEmoji, isVip]);
+  }, [route, revealedCells, bounds, pois, avatarPhotoUrl, avatarEmoji, isVip, pickMode]);
 
   useEffect(() => {
     if (!ready) return;
@@ -89,7 +107,8 @@ export const ExplorerMap = forwardRef<
       const message = JSON.parse(event.nativeEvent.data) as
         | { type: 'ready' }
         | { type: 'bounds'; minLatitude: number; maxLatitude: number; minLongitude: number; maxLongitude: number }
-        | { type: 'poi-tap'; poiId: string };
+        | { type: 'poi-tap'; poiId: string }
+        | { type: 'map-tap'; lat: number; lng: number };
       if (message.type === 'ready') setReady(true);
       if (message.type === 'bounds') {
         const next: ViewportBounds = {
@@ -102,6 +121,7 @@ export const ExplorerMap = forwardRef<
         onBoundsChange?.(next);
       }
       if (message.type === 'poi-tap') onMarkerPress?.(message.poiId);
+      if (message.type === 'map-tap') onMapTap?.({ latitude: message.lat, longitude: message.lng });
     } catch {
       // Ignore anything that doesn't match the Leaflet bridge contract.
     }
@@ -143,6 +163,7 @@ const leafletHtml = `<!doctype html>
     .leaflet-control-attribution{font-size:9px!important;background:rgba(7,17,26,.82)!important;color:#8FA6B5!important}
     .leaflet-control-attribution a{color:${colors.brand}!important}
     .leaflet-control-zoom a{background:${colors.background}!important;color:#EDF0F7!important;border-color:${colors.outline}!important}
+    .leaflet-container.picking{cursor:crosshair}
     .player-avatar-icon{display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;background:${colors.surface};border:2px solid ${colors.brand};box-shadow:0 0 0 2px rgba(0,0,0,0.25);overflow:hidden}
     .player-avatar-icon.is-vip{border-color:#F5C542;box-shadow:0 0 0 2px rgba(245,197,66,0.35)}
     .player-avatar-icon img{width:100%;height:100%;object-fit:cover}
@@ -168,11 +189,20 @@ const leafletHtml = `<!doctype html>
       var accuracyCircle = null;
       var poiMarkers = {};
       var lastCurrent = null;
+      var pickModeActive = false;
 
       window.recenterOnPlayer = function () {
         if (!lastCurrent) return;
         map.setView([lastCurrent.lat, lastCurrent.lng], Math.max(map.getZoom(), ${INITIAL_ZOOM}));
       };
+
+      // Satellite Scan's tap-to-pick mode — a plain Leaflet 'click' (not a
+      // drag-end), reported back to RN so it can consume the item and
+      // trigger the local fog reveal at the chosen point.
+      map.on('click', function (e) {
+        if (!pickModeActive) return;
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'map-tap', lat: e.latlng.lat, lng: e.latlng.lng }));
+      });
 
       function postBounds() {
         var bounds = map.getBounds();
@@ -187,6 +217,9 @@ const leafletHtml = `<!doctype html>
       map.on('moveend', postBounds);
 
       window.updateMap = function (data) {
+        pickModeActive = !!data.pickMode;
+        map.getContainer().classList.toggle('picking', pickModeActive);
+
         if (fogLayer) map.removeLayer(fogLayer);
         var rings = [data.fog.outerRing].concat(data.fog.holes);
         fogLayer = L.polygon(rings, { stroke: false, fillColor: '${colors.fog}', fillOpacity: 1, interactive: false }).addTo(map);

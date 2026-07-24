@@ -8,6 +8,7 @@ import {
   centerlineCellsForRoute,
   cullCellsToViewport,
   resolutionStats,
+  SATELLITE_SCAN_RING_RADIUS,
   type ViewportBounds,
 } from '../src/domain/fog';
 import type { TrackPoint } from '../src/domain/types';
@@ -76,6 +77,16 @@ describe('cell reveal', () => {
     // Filled-disk formula: 1 + 3N(N+1) cells for radius N.
     expect(radius2).toHaveLength(19);
     for (const cell of radius1) expect(radius2).toContain(cell);
+  });
+
+  // Satellite Scan's one-shot reveal (explorer-context.tsx's revealAreaAt)
+  // is deliberately much larger than the default per-ping ring — a guard
+  // against a future edit accidentally shrinking it back down to something
+  // unremarkable.
+  it("Satellite Scan's fixed ring radius reveals a meaningfully larger disk than the default per-ping ring", () => {
+    const base = cellsRevealedByPoint(PRAGUE, 11, 1);
+    const scan = cellsRevealedByPoint(PRAGUE, 11, SATELLITE_SCAN_RING_RADIUS);
+    expect(scan.length).toBeGreaterThan(base.length * 10);
   });
 });
 

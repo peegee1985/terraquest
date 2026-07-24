@@ -5,7 +5,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Card, Eyebrow, PrimaryButton, Screen } from '@/components/ui/primitives';
 import { convex } from '@/state/convex-client';
-import { useMyInventory, useUseItem, type InventoryEntry, type InventoryItemId } from '@/state/inventory-client';
+import { useMyInventory, useUseItem, type ActivatableItemId, type InventoryEntry, type InventoryItemId } from '@/state/inventory-client';
 import { useMyProfile } from '@/state/profile-client';
 import { colors, spacing, typography } from '@/theme/tokens';
 
@@ -15,6 +15,7 @@ const ITEM_LABELS: Record<InventoryItemId, string> = {
   memory_marker: 'Memory Marker',
   radius_boost_potion: 'Radius Boost Potion',
   xp_boost_potion: 'XP Boost Potion',
+  satellite_scan: 'Satelitní sken',
 };
 
 const ITEM_ICONS: Record<InventoryItemId, React.ComponentProps<typeof MaterialCommunityIcons>['name']> = {
@@ -23,9 +24,16 @@ const ITEM_ICONS: Record<InventoryItemId, React.ComponentProps<typeof MaterialCo
   memory_marker: 'map-marker-star-outline',
   radius_boost_potion: 'radius-outline',
   xp_boost_potion: 'flash-outline',
+  satellite_scan: 'satellite-variant',
 };
 
-const ACTIVATABLE_ITEMS = new Set<InventoryItemId>(['radius_boost_potion', 'xp_boost_potion']);
+// Instant-activate items — one tap here does the whole thing. Satellite
+// Scan is deliberately NOT in this set: it needs a map location, so its
+// "Použít na mapě" button below just navigates to the map's pick-a-spot
+// mode instead of activating anything from this screen. Typed as
+// Set<InventoryItemId> (a superset of ActivatableItemId, same string
+// literals) purely so .has(entry.itemId) below doesn't need a cast.
+const ACTIVATABLE_ITEMS = new Set<InventoryItemId>(['radius_boost_potion', 'xp_boost_potion', 'scanner_pulse']);
 
 function formatRemaining(expiresAt: number, now: number): string {
   const remainingMs = Math.max(0, expiresAt - now);
@@ -52,6 +60,7 @@ function ActiveBoostBanner({ label, expiresAt }: { label: string; expiresAt: num
 }
 
 function InventoryRow({ entry }: { entry: InventoryEntry }) {
+  const router = useRouter();
   // Named to avoid the "use*" prefix — it's a plain async function (the
   // mutation caller useMutation returns), not a hook, but ESLint's
   // react-hooks/rules-of-hooks flags any "use*"-named call inside a
@@ -59,6 +68,7 @@ function InventoryRow({ entry }: { entry: InventoryEntry }) {
   const activateItem = useUseItem();
   const [busy, setBusy] = useState(false);
   const activatable = ACTIVATABLE_ITEMS.has(entry.itemId);
+  const isSatelliteScan = entry.itemId === 'satellite_scan';
 
   return (
     <View style={styles.row}>
@@ -67,14 +77,22 @@ function InventoryRow({ entry }: { entry: InventoryEntry }) {
         <Text style={styles.rowLabel}>{ITEM_LABELS[entry.itemId]}</Text>
         <Text style={styles.rowQuantity}>×{entry.quantity}</Text>
       </View>
-      {activatable ? (
+      {isSatelliteScan ? (
+        <PrimaryButton
+          disabled={entry.quantity === 0}
+          icon="satellite-variant"
+          label="Použít na mapě"
+          onPress={() => router.push({ pathname: '/(tabs)/map', params: { activateSatelliteScan: '1' } })}
+          tone="surface"
+        />
+      ) : activatable ? (
         <PrimaryButton
           disabled={busy || entry.quantity === 0}
           icon="flash-outline"
           label={busy ? 'Aktivuji...' : 'Použít'}
           onPress={async () => {
             setBusy(true);
-            await activateItem({ itemId: entry.itemId as 'radius_boost_potion' | 'xp_boost_potion' }).catch(() => undefined);
+            await activateItem({ itemId: entry.itemId as ActivatableItemId }).catch(() => undefined);
             setBusy(false);
           }}
           tone="surface"

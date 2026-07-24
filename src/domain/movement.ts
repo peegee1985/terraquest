@@ -59,6 +59,9 @@ export function movementModeBit(mode: MovementMode): number {
   return MODE_BITS[mode];
 }
 
+/** Not a MovementMode — a separate mode_mask bit for cells revealed by Satellite Scan (explorer-context.tsx's revealAreaAt) rather than actual GPS movement, so the source is still visible in the data even though it's never eligible for exploration XP (upsertSeen is always called with normalizedForXp: false for these). */
+export const MANUAL_REVEAL_MODE_BIT = 16;
+
 /** Average speed (m/s) over the last windowSize+1 points, derived from distance/time rather than trusting any single instantaneous GPS speed reading. */
 export function computeRollingSpeedMps(points: TrackPoint[], windowSize = 5): number {
   const relevant = points.slice(-(windowSize + 1));

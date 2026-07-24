@@ -1,7 +1,7 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import * as Haptics from 'expo-haptics';
-import { useRouter } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -18,6 +18,7 @@ import { useTodayStats } from '@/hooks/use-today-stats';
 import { useWeather } from '@/hooks/use-weather';
 import { convex } from '@/state/convex-client';
 import { useExplorer } from '@/state/explorer-context';
+import { useUseItem } from '@/state/inventory-client';
 import type { PoiMarker } from '@/state/poi-client';
 import { useMyProfile } from '@/state/profile-client';
 import { colors, radii, spacing, typography } from '@/theme/tokens';
@@ -79,10 +80,42 @@ const DEFAULT_MAP_BOUNDS: ViewportBounds = {
 
 export default function MapScreen() {
   const router = useRouter();
-  const { session, revealedCells } = useExplorer();
+  const { session, revealedCells, revealAreaAt } = useExplorer();
   const { isForegroundDenied, foreground, requestForeground } = useLocationPermissions();
   const profile = useMyProfile();
   const today = useTodayStats();
+  const activateItem = useUseItem();
+
+  // Satellite Scan: inventory.tsx's "Použít na mapě" button navigates here
+  // with this param to enter tap-to-pick mode. A ref (not just checking the
+  // param) guards against re-entering pick mode on every re-render, since
+  // expo-router keeps the param around after the initial navigation.
+  const params = useLocalSearchParams<{ activateSatelliteScan?: string }>();
+  const satelliteScanParamHandledRef = useRef(false);
+  const [pickingSatelliteScan, setPickingSatelliteScan] = useState(false);
+  useEffect(() => {
+    if (params.activateSatelliteScan && !satelliteScanParamHandledRef.current) {
+      satelliteScanParamHandledRef.current = true;
+      setPickingSatelliteScan(true);
+    }
+  }, [params.activateSatelliteScan]);
+
+  const handleSatelliteScanTap = useCallback(
+    async (point: { latitude: number; longitude: number }) => {
+      setPickingSatelliteScan(false);
+      const result = await activateItem({ itemId: 'satellite_scan' }).catch(
+        () => ({ ok: false as const, reason: 'not_owned' as const }),
+      );
+      if (!result.ok) {
+        Alert.alert('Satelitní sken', 'Nemáš už žádný satelitní sken k použití.');
+        return;
+      }
+      await revealAreaAt(point);
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+      Alert.alert('Satelitní sken', 'Oblast byla odhalena.');
+    },
+    [activateItem, revealAreaAt],
+  );
   const avatarProps = {
     avatarPhotoUrl: profile?.avatarPhotoUrl,
     avatarEmoji: avatarPresetById(profile?.avatarId ?? 'compass').emoji,
@@ -152,7 +185,9 @@ export default function MapScreen() {
               <ExplorerMap
                 ref={mapRef}
                 onBoundsChange={setMapBounds}
+                onMapTap={(point) => void handleSatelliteScanTap(point)}
                 onMarkerPress={(poiId) => void handleMarkerPress(poiId, pois, discover)}
+                pickMode={pickingSatelliteScan}
                 pois={pois}
                 revealedCells={revealedCells}
                 route={session.route}
@@ -163,6 +198,16 @@ export default function MapScreen() {
         ) : (
           <ExplorerMap ref={mapRef} onBoundsChange={setMapBounds} revealedCells={revealedCells} route={session.route} {...avatarProps} />
         )}
+
+        {pickingSatelliteScan ? (
+          <View style={styles.pickBanner}>
+            <MaterialCommunityIcons color={colors.brand} name="satellite-variant" size={20} />
+            <Text style={styles.pickBannerText}>Klepni na mapu, kam odhalit satelitní sken</Text>
+            <Pressable accessibilityRole="button" onPress={() => setPickingSatelliteScan(false)}>
+              <Text style={styles.pickBannerCancel}>Zrušit</Text>
+            </Pressable>
+          </View>
+        ) : null}
 
         <View style={styles.topHud}>
           <View style={styles.brandBlock}>
@@ -232,6 +277,23 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   weatherText: { ...typography.label, color: colors.textPrimary },
+  pickBanner: {
+    position: 'absolute',
+    top: spacing.sm + 60,
+    left: spacing.md,
+    right: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    backgroundColor: 'rgba(7,17,26,0.96)',
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.brand,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 10,
+  },
+  pickBannerText: { ...typography.caption, color: colors.textPrimary, flex: 1 },
+  pickBannerCancel: { ...typography.label, color: colors.danger },
   batteryBadge: {
     position: 'absolute',
     top: spacing.sm + 120,

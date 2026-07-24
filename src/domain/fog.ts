@@ -130,6 +130,13 @@ function cellCenterMeters(cellId: string): { x: number; y: number } {
   return axialToMeters(coord, EDGE_LENGTH_METERS[resolution]);
 }
 
+// Satellite Scan (items.ts's SATELLITE_SCAN_ITEM_ID): a one-shot reveal at
+// a player-chosen point, independent of level/ring-boost state — fixed and
+// deliberately much larger than the live per-ping reveal ring so spending
+// the item is obviously worth it. At RESOLUTION 11 (~28.7m edge length)
+// this covers a disk on the order of ~250m across.
+export const SATELLITE_SCAN_RING_RADIUS = 8;
+
 /**
  * A filled hex disk around a visited cell — a rough per-ping "you were
  * here" radius. `ringRadius` defaults to 1 (the original fixed 7-cell

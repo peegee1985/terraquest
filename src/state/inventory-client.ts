@@ -5,19 +5,23 @@ function clientFunctionReference<F extends FunctionReference<'query' | 'mutation
   return { [Symbol.for('functionName')]: name } as unknown as F;
 }
 
-export type InventoryItemId = 'map_theme_token' | 'scanner_pulse' | 'memory_marker' | 'radius_boost_potion' | 'xp_boost_potion';
+export type InventoryItemId =
+  | 'map_theme_token'
+  | 'scanner_pulse'
+  | 'memory_marker'
+  | 'radius_boost_potion'
+  | 'xp_boost_potion'
+  | 'satellite_scan';
+
+export type ActivatableItemId = 'radius_boost_potion' | 'xp_boost_potion' | 'scanner_pulse' | 'satellite_scan';
 
 export type InventoryEntry = { itemId: InventoryItemId; quantity: number };
 
-export type UseItemResult = { ok: true; expiresAt: number } | { ok: false; reason: 'not_owned' };
+/** expiresAt is only present for the temporary-boost items (Radius/XP Boost Potion, Scanner Pulse) — Satellite Scan's `ok: true` has no expiry, it's an instant one-shot reveal. */
+export type UseItemResult = { ok: true; expiresAt?: number } | { ok: false; reason: 'not_owned' };
 
 type ListInventoryForUserQuery = FunctionReference<'query', 'public', { userId: string }, InventoryEntry[]>;
-type UseItemMutation = FunctionReference<
-  'mutation',
-  'public',
-  { itemId: 'radius_boost_potion' | 'xp_boost_potion' },
-  UseItemResult
->;
+type UseItemMutation = FunctionReference<'mutation', 'public', { itemId: ActivatableItemId }, UseItemResult>;
 
 const listInventoryForUserRef =
   clientFunctionReference<ListInventoryForUserQuery>('inventory:listInventoryForUser');
