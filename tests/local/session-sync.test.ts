@@ -44,9 +44,11 @@ function enqueueFinishedSession(outbox: ReturnType<typeof createOutboxRepository
     distanceMeters: 800,
     newExplorationUnitsCount: 5,
     stepsCount: 0,
+    cumulativeElapsedSecondsToday: 600,
+    cumulativeDistanceMetersToday: 800,
   };
   return outbox.enqueue({
-    eventId: sessionSyncEventId(SESSION_ID, startedAt),
+    eventId: sessionSyncEventId(SESSION_ID, startedAt, endedAt),
     type: SESSION_SYNC_EVENT_TYPE,
     payload,
     createdAt: endedAt,
@@ -73,6 +75,7 @@ describe('processDueSyncEvents', () => {
       new_cells: 0,
       xp_pending: 0,
       last_confirmed_sequence: 2,
+      normalized_count_at_checkpoint: 0,
       updated_at: endedAt,
     });
     await trackPoints.insert({ sessionId: SESSION_ID, sequence: 0, latitude: 50, longitude: 14, capturedAt: 2000 });
@@ -151,6 +154,7 @@ describe('processDueSyncEvents', () => {
       new_cells: 0,
       xp_pending: 0,
       last_confirmed_sequence: 0,
+      normalized_count_at_checkpoint: 0,
       updated_at: 9000,
     });
     // A point belonging to the NEW session (captured well after the old
@@ -187,6 +191,7 @@ describe('processDueSyncEvents', () => {
       new_cells: 0,
       xp_pending: 0,
       last_confirmed_sequence: 1,
+      normalized_count_at_checkpoint: 0,
       updated_at: endedAt,
     });
     await trackPoints.insert({ sessionId: SESSION_ID, sequence: 0, latitude: 50, longitude: 14, capturedAt: 2000 });

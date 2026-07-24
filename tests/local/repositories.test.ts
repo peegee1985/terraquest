@@ -1,4 +1,5 @@
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { bytesToBase64 } from '../../src/data/local/crypto';
@@ -39,6 +40,7 @@ describe('session repository', () => {
       new_cells: 2,
       xp_pending: 5,
       last_confirmed_sequence: 3,
+      normalized_count_at_checkpoint: 0,
       updated_at: 1012,
     });
 
@@ -57,6 +59,7 @@ describe('session repository', () => {
       new_cells: 4,
       xp_pending: 0,
       last_confirmed_sequence: 10,
+      normalized_count_at_checkpoint: 0,
       updated_at: 2000,
     });
     expect(await sessions.getActive()).toBeNull();
@@ -220,6 +223,7 @@ describe('transactional atomicity', () => {
       new_cells: 0,
       xp_pending: 0,
       last_confirmed_sequence: 0,
+      normalized_count_at_checkpoint: 0,
       updated_at: 1000,
     });
 

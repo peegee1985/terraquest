@@ -55,10 +55,20 @@ function optionsForProfile(profile: TrackingProfile): Location.LocationTaskOptio
     // a watchPositionAsync fallback as defense in depth in case task
     // registration itself is rejected (e.g. ForegroundServiceStartNotAllowedException
     // thrown at registration time, not just inside the service callback).
+    //
+    // killServiceOnDestroy: true (2026-07-24) — ambient tracking's explicit
+    // design: keeps running through screen-lock/backgrounding exactly as
+    // above, but stops the moment the user swipes the app away from
+    // Recents. Confirmed from expo-location's own native source
+    // (LocationTaskService.kt's onTaskRemoved) that this distinction is
+    // real: onTaskRemoved only fires on task removal, never on a plain
+    // background/screen-lock, and only calls stop() when this flag is
+    // true. No JS-side "stop tracking" call is needed for the app-closed
+    // case at all — the OS does it.
     foregroundService: {
       notificationTitle: 'TerraQuest',
       notificationBody: 'Zaznamenává se tvůj průzkum',
-      killServiceOnDestroy: false,
+      killServiceOnDestroy: true,
     },
   };
 }

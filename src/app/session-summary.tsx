@@ -1,96 +1,27 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Card, MetricCard, PrimaryButton, Screen, SectionTitle } from '@/components/ui/primitives';
-import { getLocalPersistence } from '@/data/local';
-import { LOCAL_SESSION_ID } from '@/domain/tracking-task';
+import { useTodayStats } from '@/hooks/use-today-stats';
 import { colors, spacing, typography } from '@/theme/tokens';
-
-type SummaryData = {
-  distanceMeters: number;
-  newExplorationUnits: number;
-  elapsedSeconds: number;
-  confirmedXp: number;
-  pendingXp: number;
-};
 
 function formatDuration(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
   return `${minutes} min`;
 }
 
-// finishSession (explorer-context.tsx) writes an immediate distance_m:0/
-// new_cells:0 placeholder (via persistSession) the instant the session
-// flips to 'processing', then overwrites it with the real computed values
-// from a fire-and-forget async continuation that awaits several things
-// (a track-point read, a cell count, and since TQ-46 a Health Connect
-// query too) — easily slower than the navigation to this screen. A single
-// one-time read here raced that write and lost: confirmed on a real
-// device, a real multi-minute walk with nonzero confirmed XP rendered as
-// 0.00 km / 0 new units. Polling until unmount is the same
-// eventual-consistency pattern explorer-context.tsx already uses for the
-// live route while a session is active.
-const REFRESH_INTERVAL_MS = 500;
-
 /**
- * TQ-31: reads back the numbers finishSession (explorer-context.tsx) just
- * computed and persisted — the local_session row's distance_m/new_cells/
- * xp_pending (real values since TQ-31, previously always 0) and the local
- * xp_projection row's confirmed_xp/pending_xp split.
- *
- * Acceptance criteria:
- * - "Součet odpovídá serverovému ledgeru": confirmedXp comes straight from
- *   xp_projection.confirmed_xp, which is only ever set from a real server
- *   response (session-sync.ts's processDueSyncEvents applying the
- *   transport's confirmedXp) — never computed locally.
- * - "Čekající XP jsou odlišené": pendingXp is rendered as its own visually
- *   distinct row/tag, never merged into the confirmed total.
- * - "Soukromé zóny jsou na sdílené kartě skryté": no sharing/export feature
- *   exists yet (private zones themselves are TQ-34, still backlog) — this
- *   screen has no "share" action to apply that redaction to, so the
- *   criterion doesn't yet have anything to attach to. Deferred alongside
- *   TQ-34, noted in Notion rather than silently skipped.
+ * Ambient tracking has no "finish" moment anymore (explorer-context.tsx),
+ * so this is no longer a one-time post-expedition summary — it's an
+ * on-demand "today so far" recap, opened from the map's stats card.
+ * useTodayStats polls the same local_session/xp_projection rows the old
+ * finishSession used to write once; ambient tracking's periodic checkpoint
+ * now keeps them continuously up to date instead.
  */
 export default function SessionSummaryScreen() {
   const router = useRouter();
-  const [data, setData] = useState<SummaryData | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    let persistence: Awaited<ReturnType<typeof getLocalPersistence>> | null = null;
-
-    const refresh = async () => {
-      if (!persistence) return;
-      const [sessionRow, projection] = await Promise.all([
-        persistence.session.getById(LOCAL_SESSION_ID),
-        persistence.xpProjection.get(),
-      ]);
-      if (cancelled) return;
-      setData({
-        distanceMeters: sessionRow?.distance_m ?? 0,
-        newExplorationUnits: sessionRow?.new_cells ?? 0,
-        elapsedSeconds: sessionRow?.elapsed_seconds ?? 0,
-        confirmedXp: projection.confirmed_xp,
-        pendingXp: projection.pending_xp,
-      });
-    };
-
-    getLocalPersistence()
-      .then((loaded) => {
-        if (cancelled) return;
-        persistence = loaded;
-        void refresh();
-      })
-      .catch(() => undefined);
-
-    const interval = setInterval(() => void refresh(), REFRESH_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, []);
+  const data = useTodayStats();
 
   return (
     <Screen>
@@ -98,7 +29,7 @@ export default function SessionSummaryScreen() {
         <Pressable accessibilityLabel="Zavřít" accessibilityRole="button" onPress={() => router.back()} style={styles.back}>
           <MaterialCommunityIcons color={colors.brand} name="chevron-left" size={24} />
         </Pressable>
-        <Text style={styles.title}>Souhrn výpravy</Text>
+        <Text style={styles.title}>Dnešní shrnutí</Text>
       </View>
 
       <SectionTitle title="Pohyb a objevy" />

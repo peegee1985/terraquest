@@ -130,13 +130,9 @@ function StepGoalRow() {
 }
 
 function DeleteHistoryRow() {
-  const { session, resetLocalHistory } = useExplorer();
+  const { resetLocalHistory } = useExplorer();
 
   const confirmDelete = () => {
-    if (session.active) {
-      Alert.alert('Průzkum právě běží', 'Nejprve dokonči nebo ukonči aktuální výpravu.');
-      return;
-    }
     Alert.alert(
       'Smazat historii?',
       'Smaže se tvá lokální trasa a odkrytá mlha na tomto zařízení. Potvrzené XP a účet zůstanou beze změny.',
@@ -170,7 +166,6 @@ export default function SettingsScreen() {
   const router = useRouter();
   const identity = useAuthIdentity();
   const isGuest = identity?.isAnonymous ?? true;
-  const { hasCompletedSession } = useExplorer();
   const { isForegroundGranted, isBackgroundGranted, requestBackground: requestBackgroundPermission } = useLocationPermissions();
 
   const requestBackground = async () => {
@@ -221,20 +216,20 @@ export default function SettingsScreen() {
 
       <Card style={styles.permissionCard}>
         <View style={styles.permissionIcon}>
-          <MaterialCommunityIcons color={hasCompletedSession ? colors.brand : colors.textDisabled} name="map-clock-outline" size={28} />
+          <MaterialCommunityIcons color={isForegroundGranted ? colors.brand : colors.textDisabled} name="map-clock-outline" size={28} />
         </View>
         <View style={styles.permissionCopy}>
           <Text style={styles.cardTitle}>Průzkum na pozadí</Text>
           <Text style={styles.cardBody}>
-            {!hasCompletedSession
-              ? 'Odemkne se po dokončení první výpravy — mimo aktivní průzkum polohu nesbíráme.'
+            {!isForegroundGranted
+              ? 'Nejdřív povol polohu při používání aplikace.'
               : isBackgroundGranted
-                ? 'Zapnuto — záznam pokračuje i při zamčeném telefonu.'
-                : 'Povol, aby záznam pokračoval při zamčeném telefonu. Mimo aktivní průzkum polohu nesbíráme.'}
+                ? 'Zapnuto — záznam pokračuje i při zamčeném telefonu, dokud aplikaci ručně nezavřeš.'
+                : 'Povol, aby záznam pokračoval při zamčeném telefonu. Zavřením aplikace se záznam vždy zastaví.'}
           </Text>
         </View>
       </Card>
-      {hasCompletedSession && !isBackgroundGranted ? (
+      {isForegroundGranted && !isBackgroundGranted ? (
         <PrimaryButton label="Povolit průzkum na pozadí" icon="map-marker-path" onPress={requestBackground} tone="surface" />
       ) : null}
 

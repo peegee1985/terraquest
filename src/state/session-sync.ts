@@ -31,14 +31,30 @@ export type SessionSyncPayload = {
   // TQ-46: steps during this session from Health Connect, 0 if unavailable
   // (see health-connect.ts's getStepsBetween, which never throws).
   stepsCount: number;
+  // Ambient tracking's day-scoped totals (resets at local midnight) — used
+  // server-side only for sessionQualifiesForStreak, never for XP amounts or
+  // stat bumps, which use distanceMeters/elapsedSeconds (this checkpoint's
+  // own delta) above. See convex/sessions.ts's comment for why these can't
+  // just reuse the per-checkpoint delta.
+  cumulativeElapsedSecondsToday: number;
+  cumulativeDistanceMetersToday: number;
 };
 
 export type SyncResult = { ok: true; confirmedXp?: number } | { ok: false; errorClass: string };
 export type SyncTransport = (payload: SessionSyncPayload) => Promise<SyncResult>;
 
-/** A session can reuse the same slot across expeditions (see tracking-task.ts), so the event id must key off the specific start time, not just the slot. */
-export function sessionSyncEventId(sessionId: string, startedAt: number | null): string {
-  return `session-sync:${sessionId}:${startedAt ?? 'unknown'}`;
+/**
+ * A session can reuse the same slot across expeditions (see
+ * tracking-task.ts), so the event id must key off the specific start time,
+ * not just the slot. Ambient tracking's periodic checkpoints additionally
+ * share the same startedAt across many checkpoints in a row (there's no
+ * per-expedition "start" anymore) — endedAt (unique per checkpoint) must be
+ * included too, or the outbox's `ON CONFLICT(event_id) DO NOTHING` (see
+ * repositories/outbox.ts) would silently drop every checkpoint after the
+ * first for the rest of the day.
+ */
+export function sessionSyncEventId(sessionId: string, startedAt: number | null, endedAt: number): string {
+  return `session-sync:${sessionId}:${startedAt ?? 'unknown'}:${endedAt}`;
 }
 
 /**
@@ -86,6 +102,8 @@ type SubmitTrackingSessionMutation = FunctionReference<
     distanceMeters: number;
     newExplorationUnitsCount: number;
     stepsCount: number;
+    cumulativeElapsedSecondsToday: number;
+    cumulativeDistanceMetersToday: number;
   },
   { distanceAwarded: number; explorationAwarded: number; totalConfirmedXp: number; levelUps: { level: number; rankId: string }[] }
 >;
@@ -111,6 +129,8 @@ export function convexSessionSyncTransport(client: ConvexReactClient): SyncTrans
         distanceMeters: payload.distanceMeters,
         newExplorationUnitsCount: payload.newExplorationUnitsCount,
         stepsCount: payload.stepsCount ?? 0,
+        cumulativeElapsedSecondsToday: payload.cumulativeElapsedSecondsToday,
+        cumulativeDistanceMetersToday: payload.cumulativeDistanceMetersToday,
       });
       return { ok: true, confirmedXp: result.totalConfirmedXp };
     } catch (error) {

@@ -13,6 +13,14 @@ export type LocalSessionRow = {
   new_cells: number;
   xp_pending: number;
   last_confirmed_sequence: number;
+  // Ambient tracking's periodic XP checkpoint cursor: the lifetime
+  // normalized-for-XP cell count as of the last successfully-confirmed
+  // checkpoint. Unlike raw track points (pruned after confirmation via
+  // deleteCapturedUpTo, so "what's left in the DB" already IS the unsent
+  // delta), local_explored_cell rows are permanent — this is what lets a
+  // checkpoint report only the cells gained SINCE the last one instead of
+  // the lifetime total every time.
+  normalized_count_at_checkpoint: number;
   updated_at: number;
 };
 

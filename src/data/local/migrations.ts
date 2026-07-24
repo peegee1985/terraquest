@@ -16,6 +16,14 @@ export const MIGRATIONS: readonly Migration[] = [
     id: '0001_initial_local_tables',
     statements: CREATE_TABLE_STATEMENTS,
   },
+  {
+    // Ambient tracking's periodic XP checkpoint cursor — see
+    // LocalSessionRow's comment in models.ts for what this tracks.
+    id: '0002_session_checkpoint_cursor',
+    statements: [
+      'ALTER TABLE local_session ADD COLUMN normalized_count_at_checkpoint INTEGER NOT NULL DEFAULT 0;',
+    ],
+  },
 ];
 
 const MIGRATIONS_TABLE = `CREATE TABLE IF NOT EXISTS schema_migrations (

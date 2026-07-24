@@ -2,19 +2,19 @@ import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ExplorerMap, type ExplorerMapHandle } from '../../components/map/explorer-map';
 import { PoiLayer, type PoiLayerState } from '../../components/map/poi-layer';
 
-import { PrimaryButton } from '@/components/ui/primitives';
-import { batteryIconName, formatBatteryPercent } from '@/domain/battery';
 import { avatarPresetById } from '@/domain/avatars';
+import { batteryIconName, formatBatteryPercent } from '@/domain/battery';
 import type { ViewportBounds } from '@/domain/fog';
 import { formatTemperatureC, weatherCodeToSummary } from '@/domain/weather';
 import { useBattery } from '@/hooks/use-battery';
 import { useLocationPermissions } from '@/hooks/use-location-permissions';
+import { useTodayStats } from '@/hooks/use-today-stats';
 import { useWeather } from '@/hooks/use-weather';
 import { convex } from '@/state/convex-client';
 import { useExplorer } from '@/state/explorer-context';
@@ -77,17 +77,12 @@ const DEFAULT_MAP_BOUNDS: ViewportBounds = {
   maxLongitude: 14.4326,
 };
 
-function formatDuration(seconds: number) {
-  const minutes = Math.floor(seconds / 60).toString().padStart(2, '0');
-  const rest = (seconds % 60).toString().padStart(2, '0');
-  return `${minutes}:${rest}`;
-}
-
 export default function MapScreen() {
   const router = useRouter();
-  const { session, revealedCells, startSession, togglePause, finishSession } = useExplorer();
-  const { isForegroundDenied, requestForeground } = useLocationPermissions();
+  const { session, revealedCells } = useExplorer();
+  const { isForegroundDenied, foreground, requestForeground } = useLocationPermissions();
   const profile = useMyProfile();
+  const today = useTodayStats();
   const avatarProps = {
     avatarPhotoUrl: profile?.avatarPhotoUrl,
     avatarEmoji: avatarPresetById(profile?.avatarId ?? 'compass').emoji,
@@ -99,8 +94,8 @@ export default function MapScreen() {
   // (see DEFAULT_MAP_BOUNDS) until the map's first real report lands.
   const [mapBounds, setMapBounds] = useState<ViewportBounds>(DEFAULT_MAP_BOUNDS);
   // Rounded to ~1km precision so useWeather's effect (keyed on
-  // latitude/longitude) doesn't refetch on every 1.5s GPS poll during an
-  // active session — weather doesn't vary at that resolution anyway.
+  // latitude/longitude) doesn't refetch on every 1.5s GPS poll while
+  // tracking is active — weather doesn't vary at that resolution anyway.
   const currentPoint = session.route.at(-1);
   const weatherLatitude = Math.round((currentPoint?.latitude ?? 50.0893) * 100) / 100;
   const weatherLongitude = Math.round((currentPoint?.longitude ?? 14.4226) * 100) / 100;
@@ -110,8 +105,8 @@ export default function MapScreen() {
       const poi = pois.find((candidate) => candidate.poiId === poiId);
       const current = session.route.at(-1);
       if (!poi) return;
-      if (!session.active || !current) {
-        Alert.alert('Objevování bodů', 'Nejprve zahaj průzkum, ať máme tvou aktuální polohu.');
+      if (!current) {
+        Alert.alert('Objevování bodů', 'Ještě nemáme tvou aktuální polohu — chvíli počkej.');
         return;
       }
       const result = await discover(poi, current).catch(() => ({ discovered: false, awarded: 0, reason: 'error' }));
@@ -121,35 +116,31 @@ export default function MapScreen() {
       const message = formatPoiFeedback(poi, result);
       if (message) Alert.alert('Bod zájmu', message);
     },
-    [session.active, session.route],
+    [session.route],
   );
 
   // TQ-21: location capture itself runs in a background task
-  // (src/domain/tracking-task.ts), started/stopped by explorer-context —
-  // this screen only requests permission and reflects status/route.
+  // (src/domain/tracking-task.ts), auto-started/stopped by explorer-context
+  // whenever foreground permission is (or isn't) granted — this screen only
+  // reflects that status and the live route, no manual control.
+  const status = isForegroundDenied
+    ? { label: 'Poloha vypnutá — klepni pro povolení', color: colors.danger, icon: 'crosshairs-question' as const }
+    : session.active
+      ? { label: 'Průzkum aktivní', color: colors.brand, icon: 'access-point' as const }
+      : { label: 'Připraveno', color: colors.textSecondary, icon: 'map-marker-outline' as const };
 
-  // TQ-20: denial doesn't block the session — it just runs without live
-  // track points (demo/limited mode), which is what this status label shows.
-  const status = session.paused
-    ? { label: 'Pozastaveno', color: colors.warning, icon: 'pause' as const }
-    : isForegroundDenied
-      ? { label: 'Omezená poloha', color: colors.danger, icon: 'crosshairs-question' as const }
-      : session.active
-        ? { label: 'Průzkum aktivní', color: colors.brand, icon: 'access-point' as const }
-        : { label: 'Připraveno', color: colors.textSecondary, icon: 'map-marker-outline' as const };
-
-  const handleStart = async () => {
+  const handleStatusPress = async () => {
+    if (!isForegroundDenied) return;
+    if (!foreground.canAskAgain) {
+      Linking.openSettings().catch(() => undefined);
+      return;
+    }
     const result = await requestForeground();
     if (result.status !== 'granted') {
       Alert.alert('Poloha je vypnutá', 'TerraQuest může zatím běžet v ukázkovém režimu. Oprávnění lze později změnit v nastavení.');
+    } else {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
     }
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
-    startSession('walk');
-  };
-
-  const handleFinish = () => {
-    finishSession();
-    router.push('/session-summary');
   };
 
   return (
@@ -176,10 +167,15 @@ export default function MapScreen() {
         <View style={styles.topHud}>
           <View style={styles.brandBlock}>
             <Text style={styles.brand}>TERRAQUEST</Text>
-            <View style={styles.statusRow}>
+            <Pressable
+              accessibilityRole="button"
+              disabled={!isForegroundDenied}
+              onPress={() => void handleStatusPress()}
+              style={styles.statusRow}
+            >
               <MaterialCommunityIcons color={status.color} name={status.icon} size={16} />
               <Text style={[styles.statusText, { color: status.color }]}>{status.label}</Text>
-            </View>
+            </Pressable>
           </View>
         </View>
 
@@ -195,40 +191,19 @@ export default function MapScreen() {
           <MaterialCommunityIcons color={colors.textPrimary} name="crosshairs-gps" size={24} />
         </Pressable>
 
-        {session.active ? (
-          <View style={styles.sessionPanel}>
-            <View style={styles.sessionMetrics}>
-              <View>
-                <Text style={styles.sessionMetric}>{formatDuration(session.elapsedSeconds)}</Text>
-                <Text style={styles.sessionLabel}>čas</Text>
-              </View>
-              <View>
-                <Text style={styles.sessionMetric}>{Math.max(0, session.route.length - 5)}</Text>
-                <Text style={styles.sessionLabel}>nové body</Text>
-              </View>
-              <View>
-                <Text style={[styles.sessionMetric, { color: colors.brand }]}>+{Math.max(0, session.route.length - 5) * 3}</Text>
-                <Text style={styles.sessionLabel}>čekající XP</Text>
-              </View>
+        <Pressable accessibilityRole="button" onPress={() => router.push('/session-summary')} style={styles.todayPanel}>
+          <View style={styles.todayMetrics}>
+            <View>
+              <Text style={styles.todayMetric}>{Math.max(0, today?.newExplorationUnits ?? 0)}</Text>
+              <Text style={styles.todayLabel}>nové body</Text>
             </View>
-            <View style={styles.actionsRow}>
-              <View style={styles.actionHalf}>
-                <PrimaryButton icon={session.paused ? 'play' : 'pause'} label={session.paused ? 'Pokračovat' : 'Pauza'} onPress={togglePause} tone="surface" />
-              </View>
-              <View style={styles.actionHalf}>
-                <PrimaryButton icon="flag-checkered" label="Dokončit" onPress={handleFinish} tone="danger" />
-              </View>
+            <View>
+              <Text style={[styles.todayMetric, { color: colors.brand }]}>+{today?.pendingXp ?? 0}</Text>
+              <Text style={styles.todayLabel}>čekající XP</Text>
             </View>
+            <MaterialCommunityIcons color={colors.textSecondary} name="chevron-right" size={22} style={styles.todayChevron} />
           </View>
-        ) : (
-          <View style={styles.startPanel}>
-            <View style={styles.startCopy}>
-              <Text style={styles.startTitle}>Co dnes odhalíš?</Text>
-              <Text style={styles.startDescription}>Trasa se ukládá lokálně a soutěžní XP potvrdí backend.</Text>
-            </View>
-            <PrimaryButton label="Zahájit průzkum" onPress={handleStart} />
-          </View>
-        )}
+        </Pressable>
       </View>
     </SafeAreaView>
   );
@@ -272,13 +247,11 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   // Fixed offset rather than a measured one — same approximation caveat as
-  // weatherBadge/batteryBadge above. Sits above the session/start panel,
-  // which varies in height, so this is a "clears both in practice" number
-  // rather than something derived from an actual measured layout.
+  // weatherBadge/batteryBadge above. Sits above the "today" card below.
   recenterButton: {
     position: 'absolute',
     right: spacing.md,
-    bottom: 200,
+    bottom: 116,
     width: 48,
     height: 48,
     borderRadius: 24,
@@ -288,14 +261,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  startPanel: { position: 'absolute', left: spacing.md, right: spacing.md, bottom: spacing.md, backgroundColor: 'rgba(7,17,26,0.96)', borderColor: colors.outline, borderWidth: 1, borderRadius: radii.xl, padding: spacing.md, gap: spacing.md },
-  startCopy: { gap: 4 },
-  startTitle: { ...typography.h2, color: colors.textPrimary },
-  startDescription: { ...typography.body, color: colors.textSecondary },
-  sessionPanel: { position: 'absolute', left: spacing.md, right: spacing.md, bottom: spacing.md, backgroundColor: 'rgba(7,17,26,0.97)', borderColor: colors.outline, borderWidth: 1, borderRadius: radii.xl, padding: spacing.md, gap: spacing.md },
-  sessionMetrics: { flexDirection: 'row', justifyContent: 'space-between' },
-  sessionMetric: { ...typography.h2, color: colors.textPrimary, fontVariant: ['tabular-nums'] },
-  sessionLabel: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
-  actionsRow: { flexDirection: 'row', gap: spacing.xs },
-  actionHalf: { flex: 1 },
+  todayPanel: {
+    position: 'absolute',
+    left: spacing.md,
+    right: spacing.md,
+    bottom: spacing.md,
+    backgroundColor: 'rgba(7,17,26,0.96)',
+    borderColor: colors.outline,
+    borderWidth: 1,
+    borderRadius: radii.xl,
+    padding: spacing.md,
+  },
+  todayMetrics: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  todayMetric: { ...typography.h2, color: colors.textPrimary, fontVariant: ['tabular-nums'] },
+  todayLabel: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
+  todayChevron: { marginLeft: 'auto' },
 });

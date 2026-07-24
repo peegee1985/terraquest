@@ -42,6 +42,19 @@ export const submitTrackingSession = mutation({
     // just sends 0 (see health-connect.ts's getStepsBetween, which itself
     // never throws and returns 0 the same way).
     stepsCount: v.number(),
+    // Ambient tracking submits a checkpoint every few minutes rather than
+    // once per expedition, so elapsedSeconds/distanceMeters above are only
+    // this checkpoint's own delta (correctly small) — but
+    // sessionQualifiesForStreak's threshold (20min OR 1km) was written
+    // assuming those numbers describe a whole walk. A 5-minute delta at
+    // walking pace never reaches either on its own, which would silently
+    // stop the daily streak from ever qualifying. These two fields are the
+    // day's cumulative totals so far (client-tracked, reset at local
+    // midnight) — used ONLY for the streak check below, never for XP
+    // amounts or the verifiedDistanceMeters stat, which still use the
+    // per-checkpoint delta exactly as before.
+    cumulativeElapsedSecondsToday: v.number(),
+    cumulativeDistanceMetersToday: v.number(),
   },
   returns: v.object({
     distanceAwarded: v.number(),
@@ -56,9 +69,20 @@ export const submitTrackingSession = mutation({
     const distanceAward = distanceXp(args.distanceMeters, args.movementMode);
     const explorationAward = explorationXp(args.newExplorationUnitsCount, args.movementMode);
 
+    // Ambient tracking submits a checkpoint every few minutes rather than
+    // once at a manual "finish", all sharing the same localSessionId (a
+    // fixed slot, see tracking-task.ts's LOCAL_SESSION_ID) and, since
+    // there's no more per-expedition "start" tap, potentially the same
+    // startedAt too. awardXp's idempotency key is (userId, eventId,
+    // sourceType) with no other disambiguation, so eventId MUST include
+    // endedAt — otherwise every checkpoint after the first would collide
+    // with the first one's eventId and get silently discarded as a
+    // "duplicate" (zero XP), rather than actually being a new checkpoint.
+    // Retries of the SAME checkpoint (same endedAt) remain safely
+    // idempotent; a later checkpoint (new endedAt) is correctly distinct.
     const distanceResult = await awardXp(ctx, {
       userId,
-      eventId: `session-distance:${args.localSessionId}:${args.startedAt}`,
+      eventId: `session-distance:${args.localSessionId}:${args.startedAt}:${args.endedAt}`,
       sourceType: 'distance',
       sourceId: args.localSessionId,
       amount: distanceAward,
@@ -69,7 +93,7 @@ export const submitTrackingSession = mutation({
 
     const explorationResult = await awardXp(ctx, {
       userId,
-      eventId: `session-exploration:${args.localSessionId}:${args.startedAt}`,
+      eventId: `session-exploration:${args.localSessionId}:${args.startedAt}:${args.endedAt}`,
       sourceType: 'new_area',
       sourceId: args.localSessionId,
       amount: explorationAward,
@@ -84,7 +108,7 @@ export const submitTrackingSession = mutation({
       await bumpUserStatsCounter(ctx, userId, 'verifiedSteps', Math.max(0, args.stepsCount), args.endedAt);
     }
 
-    if (sessionQualifiesForStreak(args.movementMode, args.elapsedSeconds, args.distanceMeters)) {
+    if (sessionQualifiesForStreak(args.movementMode, args.cumulativeElapsedSecondsToday, args.cumulativeDistanceMetersToday)) {
       await applyRecordQualifyingDay(ctx, { userId, now: args.endedAt });
     }
 

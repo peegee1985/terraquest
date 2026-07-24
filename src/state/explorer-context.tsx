@@ -1,7 +1,10 @@
+import * as Location from 'expo-location';
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { AppState } from 'react-native';
 
 import { demoRoute } from '@/data/demo';
-import { getLocalPersistence, type LocalPersistence } from '@/data/local';
+import { getLocalPersistence, type LocalPersistence, type LocalSessionRow } from '@/data/local';
+import { isSameLocalDay } from '@/domain/checkpoint';
 import { distanceXp, explorationXp } from '@/domain/progression';
 import { cellsRevealedByRoute, centerlineCellsForRoute } from '@/domain/fog';
 import { filterRoute, routeDistanceMeters } from '@/domain/gps-filter';
@@ -11,7 +14,6 @@ import { ExplorerSnapshot, MovementMode, TrackPoint } from '@/domain/types';
 import {
   LOCAL_SESSION_ID,
   startLocationTracking,
-  stopLocationTracking,
   trackingProfileForMode,
   updateLocationTrackingProfile,
   type TrackingProfile,
@@ -44,9 +46,18 @@ function RingRadiusWatcher({ onChange }: { onChange: (ringRadius: number) => voi
   return null;
 }
 
+/**
+ * Ambient tracking: no more manual start/pause/finish. `active` reflects
+ * whether we currently have foreground location permission and tracking is
+ * actually running — it flips true automatically once permission is
+ * granted (onboarding, or later via Settings) and runs continuously,
+ * foreground and backgrounded/screen-locked alike, until the user actually
+ * closes the app (tracking-task.ts's killServiceOnDestroy:true stops the
+ * native service on task removal — no JS-side "stop" call needed for that).
+ * There is deliberately no "paused" state.
+ */
 type SessionState = {
   active: boolean;
-  paused: boolean;
   mode: MovementMode;
   startedAt: number | null;
   elapsedSeconds: number;
@@ -58,31 +69,33 @@ type ExplorerContextValue = {
   session: SessionState;
   hasCompletedSession: boolean;
   revealedCells: string[];
-  startSession: (mode?: MovementMode) => void;
-  togglePause: () => void;
-  finishSession: () => void;
   resetLocalHistory: () => Promise<{ ok: boolean; reason?: string }>;
 };
 
 const MAX_ROUTE_POINTS = 500;
-// TQ-21: while a session is active, re-read the route from the DB at the
+// TQ-21: while tracking is active, re-read the route from the DB at the
 // same cadence the background task writes to it — this is what makes the
 // map reflect points regardless of whether they came from the foreground or
 // while the app was backgrounded. TQ-23's "lokální odhalení do 2 sekund"
 // acceptance criterion is what pulls this under 2000ms — it's just a local
 // SQLite read, decoupled from the location task's own 5s GPS sampling rate.
 const ROUTE_REFRESH_INTERVAL_MS = 1500;
-// TQ-24: independent of whether a session is active — a finished session
-// can still be waiting on outbox confirmation while the user browses
-// elsewhere in the app, or the app could've been relaunched since finishing.
+// TQ-24: independent of tracking state — a checkpoint can still be waiting
+// on outbox confirmation while the user browses elsewhere in the app, or
+// the app could've been relaunched since the last one landed.
 const SYNC_POLL_INTERVAL_MS = 30_000;
-// TQ-20: background location must not be offered until the user has
-// actually finished an expedition once — this flag gates that in Settings.
+// How often ambient tracking packages up what's changed and submits it —
+// frequent enough that quests/streaks/level-ups (useLevelUpCelebration
+// watches live XP the whole time the app is open) feel responsive, without
+// spamming the network or the anti-cheat ledger with tiny awards every few
+// seconds.
+const CHECKPOINT_INTERVAL_MS = 5 * 60 * 1000;
+// TQ-20: background location must not be offered until tracking has
+// actually started once — this flag gates that in Settings.
 const HAS_COMPLETED_SESSION_PREFERENCE_KEY = 'explorer.hasCompletedSession.v1';
 
 const initialSession: SessionState = {
   active: false,
-  paused: false,
   mode: 'walk',
   startedAt: null,
   elapsedSeconds: 0,
@@ -107,13 +120,6 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
   // refresh poll only calls updateLocationTrackingProfile on an actual
   // change, not every 1.5s tick.
   const trackingProfileRef = useRef<TrackingProfile>('precise');
-  // TQ-31: normalizedForXp cell count at session start, so finishSession can
-  // diff against the count at session end to get "new exploration units
-  // THIS session" — countNormalizedForXp() itself is a lifetime total, not
-  // a per-session figure. null until the async count resolves; a session
-  // finished within that (sub-second) window just reports 0 new units,
-  // an acceptable rare edge case rather than blocking session start on it.
-  const normalizedCountAtStartRef = useRef<number | null>(null);
   // TQ-122: read fresh on every 1.5s reveal poll (not just captured once
   // when the reveal effect starts) so a radius boost activating or
   // expiring mid-session takes effect immediately.
@@ -121,6 +127,15 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
   const handleRingRadiusChange = useCallback((ringRadius: number) => {
     ringRadiusRef.current = ringRadius;
   }, []);
+  // Whatever local_session row existed at hydration time (any status,
+  // including a legacy 'paused' one), or null on a brand-new install. The
+  // ensureTracking effect below MUST preserve this row's accumulated
+  // distance_m/new_cells/xp_pending/normalized_count_at_checkpoint on every
+  // app relaunch rather than re-zeroing them — those fields are the
+  // not-yet-confirmed-checkpoint cursor, and wiping them on every restart
+  // would make the next checkpoint re-award exploration units that were
+  // already counted before the restart.
+  const existingSessionRowRef = useRef<LocalSessionRow | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -159,22 +174,16 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
         setSnapshot((current) => ({ ...current, totalXp: xpProjection.confirmed_xp || current.totalXp }));
 
         if (activeSession) {
+          existingSessionRowRef.current = activeSession;
           modeRef.current = activeSession.mode;
           trackingProfileRef.current = trackingProfileForMode(activeSession.mode);
-          setSession({
-            active: activeSession.status === 'active' || activeSession.status === 'paused',
-            paused: activeSession.status === 'paused',
+          setSession((current) => ({
+            ...current,
             mode: activeSession.mode,
             startedAt: activeSession.started_at,
             elapsedSeconds: activeSession.elapsed_seconds,
             route,
-          });
-          // TQ-21: crash/kill-safe resume — if the app process was relaunched
-          // mid-expedition, make sure the background task is actually running
-          // again rather than assuming the OS kept it alive.
-          if (activeSession.status === 'active') {
-            startLocationTracking(trackingProfileRef.current).catch(() => undefined);
-          }
+          }));
         } else {
           setSession((current) => ({ ...current, route }));
         }
@@ -198,13 +207,84 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // TQ-24/TQ-31: retries the outbox with backoff regardless of whether a
-  // session is currently active — a finished session can be sitting in
-  // 'processing' (awaiting confirmation) at any time, including right after
-  // an app restart. Uses the real Convex transport when a client is
-  // configured (EXPO_PUBLIC_CONVEX_URL set); falls back to
-  // NOT_YET_CONFIGURED_TRANSPORT otherwise, same graceful-degradation
-  // pattern as _layout.tsx's BackendProvider.
+  // Ambient lifecycle: as soon as (and for as long as) we have foreground
+  // location permission, tracking runs — no button. Re-checked whenever the
+  // app returns to the foreground so a permission change made in system
+  // Settings is picked up without needing to relaunch.
+  useEffect(() => {
+    if (!hydrated) return;
+    let cancelled = false;
+
+    const ensureTracking = async () => {
+      const { status } = await Location.getForegroundPermissionsAsync();
+      if (cancelled) return;
+
+      if (status !== Location.PermissionStatus.GRANTED) {
+        setSession((current) => (current.active ? { ...current, active: false } : current));
+        return;
+      }
+
+      await startLocationTracking(trackingProfileRef.current);
+      if (cancelled) return;
+      setSession((current) => {
+        if (current.active) return current;
+
+        // Preserve an existing row's accumulated checkpoint cursor across
+        // an app relaunch (see existingSessionRowRef's comment) — only a
+        // genuinely brand-new install gets a freshly-zeroed row. updated_at
+        // is always reset to now, though: it anchors the NEXT checkpoint's
+        // elapsed-time/step window, and an existing row's updated_at could
+        // be from days ago (e.g. tracking stopped when the app was closed,
+        // per this app's own "closing the app stops it" design) — carrying
+        // that forward would make the first checkpoint after relaunch
+        // claim a multi-day elapsed window instead of the few real minutes
+        // since tracking actually resumed.
+        const existing = existingSessionRowRef.current;
+        const now = Date.now();
+        const startedAt = existing?.started_at ?? current.startedAt ?? now;
+        const next: SessionState = { ...current, active: true, startedAt, mode: existing?.mode ?? current.mode };
+        persistenceRef.current?.session
+          .upsert({
+            id: LOCAL_SESSION_ID,
+            status: 'active',
+            mode: next.mode,
+            started_at: startedAt,
+            ended_at: null,
+            elapsed_seconds: existing?.elapsed_seconds ?? 0,
+            distance_m: existing?.distance_m ?? 0,
+            new_cells: existing?.new_cells ?? 0,
+            xp_pending: existing?.xp_pending ?? 0,
+            last_confirmed_sequence: existing?.last_confirmed_sequence ?? nextSequenceRef.current,
+            normalized_count_at_checkpoint: existing?.normalized_count_at_checkpoint ?? 0,
+            updated_at: now,
+          })
+          .catch(() => undefined);
+        existingSessionRowRef.current = null;
+
+        setHasCompletedSession(true);
+        persistenceRef.current?.preferences
+          .set(HAS_COMPLETED_SESSION_PREFERENCE_KEY, 'true', Date.now())
+          .catch(() => undefined);
+        return next;
+      });
+    };
+
+    void ensureTracking();
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void ensureTracking();
+    });
+    return () => {
+      cancelled = true;
+      subscription.remove();
+    };
+  }, [hydrated]);
+
+  // TQ-24: retries the outbox with backoff regardless of tracking state — a
+  // checkpoint can be sitting in 'pending' (awaiting confirmation) at any
+  // time, including right after an app restart. Uses the real Convex
+  // transport when a client is configured (EXPO_PUBLIC_CONVEX_URL set);
+  // falls back to NOT_YET_CONFIGURED_TRANSPORT otherwise, same
+  // graceful-degradation pattern as _layout.tsx's BackendProvider.
   const syncTransport = useMemo(
     () => (convex ? convexSessionSyncTransport(convex) : NOT_YET_CONFIGURED_TRANSPORT),
     [],
@@ -231,12 +311,12 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
   }, [hydrated, syncTransport]);
 
   useEffect(() => {
-    if (!session.active || session.paused) return;
+    if (!session.active) return;
     const interval = setInterval(() => {
       setSession((current) => ({ ...current, elapsedSeconds: current.elapsedSeconds + 1 }));
     }, 1000);
     return () => clearInterval(interval);
-  }, [session.active, session.paused]);
+  }, [session.active]);
 
   // TQ-21: the background task (src/domain/tracking-task.ts) writes points
   // straight to SQLite without going through this component's state, since
@@ -244,7 +324,7 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
   // makes the map reflect those points, regardless of whether the app was
   // foregrounded or backgrounded when they were captured.
   useEffect(() => {
-    if (!session.active || session.paused) return;
+    if (!session.active) return;
     let cancelled = false;
     const refresh = async () => {
       const persistence = persistenceRef.current;
@@ -279,8 +359,8 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
       // wide visual reveal ring (cellsRevealedByRoute) and a narrow
       // centerline set that only counts for XP, and only while the detected
       // mode is walk/run (docs 03: kolo/vozidlo mají 0 pěších jednotek).
-      // Persisting on every poll (not just at session end) is what makes
-      // the fog reveal "within 2 seconds" instead of only after finishing.
+      // Persisting on every poll (not just at a checkpoint) is what makes
+      // the fog reveal "within 2 seconds" instead of only after syncing.
       const seenAt = Date.now();
       const modeBit = movementModeBit(mode);
       const visualCells = cellsRevealedByRoute(route, undefined, ringRadiusRef.current);
@@ -305,155 +385,109 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [session.active, session.paused]);
+  }, [session.active]);
 
-  const persistSession = useCallback((next: SessionState, status: 'active' | 'paused' | 'processing' | 'completed') => {
-    persistenceRef.current?.session
-      .upsert({
-        id: LOCAL_SESSION_ID,
-        status,
-        mode: next.mode,
-        started_at: next.startedAt,
-        ended_at: status === 'processing' || status === 'completed' ? Date.now() : null,
-        elapsed_seconds: next.elapsedSeconds,
-        distance_m: 0,
-        new_cells: 0,
-        xp_pending: 0,
-        last_confirmed_sequence: nextSequenceRef.current,
-        updated_at: Date.now(),
-      })
-      .catch(() => undefined);
-  }, []);
+  // Ambient tracking's periodic XP checkpoint — replaces the old
+  // "submit once at Finish" model. Every CHECKPOINT_INTERVAL_MS, package up
+  // whatever changed since the last checkpoint and submit it through the
+  // exact same anti-cheat mutation finishSession used to call once, just on
+  // a timer instead of a tap. Reads the session row fresh from the DB each
+  // tick (not React state) so it always operates on the latest persisted
+  // cursor, including across app restarts.
+  useEffect(() => {
+    if (!hydrated) return;
+    let cancelled = false;
 
-  const startSession = useCallback(
-    (mode: MovementMode = 'walk') => {
-      modeRef.current = mode;
-      trackingProfileRef.current = trackingProfileForMode(mode);
-      normalizedCountAtStartRef.current = null;
-      persistenceRef.current?.exploredCells
-        .countNormalizedForXp()
-        .then((count) => {
-          normalizedCountAtStartRef.current = count;
-        })
-        .catch(() => undefined);
-      setSession((current) => {
-        const next: SessionState = { ...current, active: true, paused: false, mode, startedAt: Date.now(), elapsedSeconds: 0 };
-        persistSession(next, 'active');
-        return next;
+    const runCheckpoint = async () => {
+      const persistence = persistenceRef.current;
+      if (!persistence || cancelled) return;
+
+      const sessionRow = await persistence.session.getById(LOCAL_SESSION_ID);
+      if (!sessionRow || sessionRow.status !== 'active' || sessionRow.started_at === null) return;
+
+      const now = Date.now();
+      const rawPoints = await persistence.trackPoints.listBySession(LOCAL_SESSION_ID);
+      // Raw points are pruned up to the last CONFIRMED checkpoint's endedAt
+      // (session-sync.ts's deleteCapturedUpTo runs only once the server
+      // actually confirms) — so whatever remains in the DB right now already
+      // IS the not-yet-submitted delta, with no separate distance cursor
+      // needed the way normalized-cell counts below require one.
+      const filtered = filterRoute(
+        rawPoints.map((point) => ({
+          latitude: point.latitude,
+          longitude: point.longitude,
+          accuracy: point.accuracy ?? null,
+          timestamp: point.capturedAt,
+        })),
+      );
+      const distanceMeters = routeDistanceMeters(filtered);
+
+      const normalizedCountNow = await persistence.exploredCells.countNormalizedForXp();
+      const newExplorationUnitsCount = Math.max(0, normalizedCountNow - sessionRow.normalized_count_at_checkpoint);
+      const elapsedSeconds = Math.max(0, Math.round((now - sessionRow.updated_at) / 1000));
+      const stepsCount = await getStepsBetween(new Date(sessionRow.updated_at), new Date(now)).catch(() => 0);
+
+      if (distanceMeters <= 0 && newExplorationUnitsCount <= 0 && stepsCount <= 0) return;
+
+      // Day-scoped cumulative totals for the streak-qualification check
+      // only (see convex/sessions.ts's comment) — reset whenever the
+      // checkpoint crosses into a new local calendar day, so a new day
+      // genuinely starts at zero instead of trivially "qualifying"
+      // forever off yesterday's total.
+      const sameDay = isSameLocalDay(sessionRow.updated_at, now);
+      const cumulativeDistanceMetersToday = (sameDay ? sessionRow.distance_m : 0) + distanceMeters;
+      const cumulativeElapsedSecondsToday = (sameDay ? sessionRow.elapsed_seconds : 0) + elapsedSeconds;
+
+      const estimatedXp = distanceXp(distanceMeters, modeRef.current) + explorationXp(newExplorationUnitsCount, modeRef.current);
+      await persistence.xpProjection.addPending(estimatedXp, now);
+
+      await persistence.session.upsert({
+        ...sessionRow,
+        distance_m: cumulativeDistanceMetersToday,
+        elapsed_seconds: cumulativeElapsedSecondsToday,
+        new_cells: sameDay ? sessionRow.new_cells + newExplorationUnitsCount : newExplorationUnitsCount,
+        xp_pending: sessionRow.xp_pending + estimatedXp,
+        normalized_count_at_checkpoint: normalizedCountNow,
+        updated_at: now,
       });
-      startLocationTracking(trackingProfileRef.current).catch(() => undefined);
-    },
-    [persistSession],
-  );
 
-  const togglePause = useCallback(() => {
-    setSession((current) => {
-      const next = { ...current, paused: !current.paused };
-      persistSession(next, next.paused ? 'paused' : 'active');
-      if (next.paused) stopLocationTracking().catch(() => undefined);
-      else startLocationTracking(trackingProfileRef.current).catch(() => undefined);
-      return next;
-    });
-  }, [persistSession]);
+      const payload: SessionSyncPayload = {
+        sessionId: LOCAL_SESSION_ID,
+        startedAt: sessionRow.started_at,
+        endedAt: now,
+        mode: modeRef.current,
+        elapsedSeconds,
+        pointCount: filtered.length,
+        distanceMeters,
+        newExplorationUnitsCount,
+        stepsCount,
+        cumulativeElapsedSecondsToday,
+        cumulativeDistanceMetersToday,
+      };
+      await persistence.outbox.enqueue({
+        eventId: sessionSyncEventId(LOCAL_SESSION_ID, sessionRow.started_at, now),
+        type: SESSION_SYNC_EVENT_TYPE,
+        payload,
+        createdAt: now,
+      });
+    };
 
-  const finishSession = useCallback(() => {
-    setSession((current) => {
-      const endedAt = Date.now();
-      // TQ-24: 'processing', not 'completed' yet — the session only becomes
-      // 'completed' once its outbox sync event is actually confirmed (see
-      // session-sync.ts). Persisted with the real startedAt (not nulled)
-      // so a later confirmation can match it against a stale one.
-      persistSession({ ...current, active: false, paused: false }, 'processing');
-
-      const startedAt = current.startedAt;
-      const mode = current.mode;
-      const elapsedSeconds = current.elapsedSeconds;
-      const normalizedCountAtStart = normalizedCountAtStartRef.current ?? 0;
-
-      // TQ-31: computing real distance/exploration numbers needs the full
-      // captured-point history (not just the display-capped in-memory
-      // route) and a fresh cell count — both async, so this runs as a
-      // fire-and-forget continuation of the synchronous state update above,
-      // same style as the other side effects in this callback.
-      void (async () => {
-        const persistence = persistenceRef.current;
-        if (!persistence) return;
-
-        const rawPoints = await persistence.trackPoints.listBySession(LOCAL_SESSION_ID);
-        const filtered = filterRoute(
-          rawPoints.map((point) => ({
-            latitude: point.latitude,
-            longitude: point.longitude,
-            accuracy: point.accuracy ?? null,
-            timestamp: point.capturedAt,
-          })),
-        );
-        const distanceMeters = routeDistanceMeters(filtered);
-        const normalizedCountAtEnd = await persistence.exploredCells.countNormalizedForXp();
-        const newExplorationUnitsCount = Math.max(0, normalizedCountAtEnd - normalizedCountAtStart);
-        // TQ-46: 0 if Health Connect is unavailable/not granted (never
-        // throws — see health-connect.ts) — the steps quest metric simply
-        // doesn't progress in that case, same as before TQ-46 existed.
-        const stepsCount = startedAt !== null ? await getStepsBetween(new Date(startedAt), new Date(endedAt)).catch(() => 0) : 0;
-
-        // Optimistic local estimate, shown immediately — replaced by the
-        // server's authoritative confirmedXp once the sync transport
-        // confirms (session-sync.ts's processDueSyncEvents).
-        const estimatedXp = distanceXp(distanceMeters, mode) + explorationXp(newExplorationUnitsCount, mode);
-        await persistence.xpProjection.addPending(estimatedXp, endedAt);
-
-        // TQ-31: the session-summary screen reads these back straight from
-        // the session row (distance_m/new_cells/xp_pending existed since
-        // TQ-24 but were always hardcoded to 0 — this is the first write of
-        // their real values).
-        const sessionRow = await persistence.session.getById(LOCAL_SESSION_ID);
-        if (sessionRow) {
-          await persistence.session.upsert({
-            ...sessionRow,
-            distance_m: distanceMeters,
-            new_cells: newExplorationUnitsCount,
-            xp_pending: estimatedXp,
-          });
-        }
-
-        const payload: SessionSyncPayload = {
-          sessionId: LOCAL_SESSION_ID,
-          startedAt,
-          endedAt,
-          mode,
-          elapsedSeconds,
-          pointCount: nextSequenceRef.current,
-          distanceMeters,
-          newExplorationUnitsCount,
-          stepsCount,
-        };
-        await persistence.outbox.enqueue({
-          eventId: sessionSyncEventId(LOCAL_SESSION_ID, startedAt),
-          type: SESSION_SYNC_EVENT_TYPE,
-          payload,
-          createdAt: endedAt,
-        });
-      })();
-
-      return { ...current, active: false, paused: false, startedAt: null };
-    });
-    stopLocationTracking().catch(() => undefined);
-    setHasCompletedSession(true);
-    persistenceRef.current?.preferences
-      .set(HAS_COMPLETED_SESSION_PREFERENCE_KEY, 'true', Date.now())
-      .catch(() => undefined);
-  }, [persistSession]);
+    const interval = setInterval(() => void runCheckpoint(), CHECKPOINT_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [hydrated]);
 
   // TQ-35 (scoped MVP): "Smazat historii" in settings.tsx — wipes the
   // local route/fog/session data this device has recorded. Deliberately
   // local-only: the server-confirmed XP ledger (the source of truth for
   // leaderboards/levels) is never touched here, since deleting THAT is a
   // much bigger, irreversible "delete my account" operation out of scope
-  // for this task. Refuses while a session is active/paused — stopping a
-  // live tracking session as a side effect of a "delete" action would be
-  // surprising, so the caller is asked to finish it first.
+  // for this task. Safe to run at any time now that tracking is ambient
+  // (there's no "mid-expedition" moment to protect against overwriting —
+  // ambient tracking simply keeps going against a freshly-empty local DB).
   const resetLocalHistory = useCallback(async (): Promise<{ ok: boolean; reason?: string }> => {
-    if (session.active) return { ok: false, reason: 'session_active' };
     const persistence = persistenceRef.current;
     if (!persistence) return { ok: false, reason: 'not_ready' };
 
@@ -464,11 +498,11 @@ export function ExplorerProvider({ children }: { children: ReactNode }) {
     setSession(initialSession);
     setRevealedCells([]);
     return { ok: true };
-  }, [session.active]);
+  }, []);
 
   const value = useMemo(
-    () => ({ snapshot, session, hasCompletedSession, revealedCells, startSession, togglePause, finishSession, resetLocalHistory }),
-    [finishSession, hasCompletedSession, resetLocalHistory, revealedCells, session, snapshot, startSession, togglePause],
+    () => ({ snapshot, session, hasCompletedSession, revealedCells, resetLocalHistory }),
+    [hasCompletedSession, resetLocalHistory, revealedCells, session, snapshot],
   );
 
   return (

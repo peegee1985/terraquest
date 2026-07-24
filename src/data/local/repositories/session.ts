@@ -7,8 +7,9 @@ export function createSessionRepository(db: LocalDb) {
       await db.run(
         `INSERT INTO local_session (
           id, status, mode, started_at, ended_at, elapsed_seconds,
-          distance_m, new_cells, xp_pending, last_confirmed_sequence, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          distance_m, new_cells, xp_pending, last_confirmed_sequence,
+          normalized_count_at_checkpoint, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           status = excluded.status,
           mode = excluded.mode,
@@ -19,6 +20,7 @@ export function createSessionRepository(db: LocalDb) {
           new_cells = excluded.new_cells,
           xp_pending = excluded.xp_pending,
           last_confirmed_sequence = excluded.last_confirmed_sequence,
+          normalized_count_at_checkpoint = excluded.normalized_count_at_checkpoint,
           updated_at = excluded.updated_at;`,
         [
           session.id,
@@ -31,6 +33,7 @@ export function createSessionRepository(db: LocalDb) {
           session.new_cells,
           session.xp_pending,
           session.last_confirmed_sequence,
+          session.normalized_count_at_checkpoint,
           session.updated_at,
         ],
       );
