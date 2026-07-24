@@ -58,10 +58,14 @@ function AvatarPickerContent() {
     } catch (uploadError) {
       // Previously swallowed with no logging at all — a failure here had
       // zero diagnostic trail, so a repeat couldn't be root-caused from
-      // Sentry either. Surface it same as every other crash path.
+      // Sentry either. Surface it same as every other crash path — and put
+      // the actual message on-screen too (not just Sentry), since without
+      // dashboard access the only way to see what's actually failing is
+      // whatever's visible on the device in front of the person testing it.
       console.warn('TerraQuest: avatar photo upload failed', uploadError);
       Sentry.captureException(uploadError);
-      Alert.alert('Nahrání se nepovedlo', 'Zkus to prosím znovu.');
+      const detail = uploadError instanceof Error ? uploadError.message : String(uploadError);
+      Alert.alert('Nahrání se nepovedlo', `Zkus to prosím znovu.\n\nDetail: ${detail}`);
     } finally {
       setUploading(false);
     }
